@@ -1,0 +1,110 @@
+/* ═══════════════════════════════════════════════════════════════════════
+ * globals.css — Styles globaux de l'application Scan
+ * 
+ * Inclut les directives Tailwind et les styles de base.
+ * Les couleurs du thème sont gérées via CSS custom properties
+ * injectées dynamiquement par le ThemeProvider.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Variables CSS par défaut (thème Forêt) ─────────────────────────── */
+/* 
+ * Ces valeurs servent de fallback avant que le ThemeProvider
+ * n'injecte les couleurs du thème choisi par l'utilisateur.
+ */
+:root {
+  --color-primary: #2d5016;
+  --color-primary-light: #4a7c28;
+  --color-primary-dark: #1a3009;
+  --color-secondary: #8b6914;
+  --color-accent: #d4a843;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f0f4ec;
+  --color-background: #f7faf5;
+  --color-on-primary: #ffffff;
+  --color-on-surface: #1a1a1a;
+  --color-on-background: #2d2d2d;
+  --color-muted: #6b7c5e;
+  --color-border: #d4dcc8;
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+}
+
+/* ─── Styles de base ─────────────────────────────────────────────────── */
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-on-background antialiased;
+    font-family:
+      "Inter",
+      system-ui,
+      -apple-system,
+      sans-serif;
+    /* Empêcher le zoom sur les inputs en mobile (iOS) */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Scrollbar personnalisée (navigateurs Webkit) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-muted);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-primary);
+  }
+}
+
+/* ─── Utilitaires personnalisés ──────────────────────────────────────── */
+@layer utilities {
+  /* Zone de sécurité iOS pour la barre de navigation inférieure */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Animation d'entrée en fondu */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Animation de slide depuis le bas (pour les modales mobile) */
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
