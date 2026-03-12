@@ -175,6 +175,7 @@ export default function DashboardPage() {
                 <h4 className="font-medium text-on-surface">{pdv.nom}</h4>
                 <div className="flex items-center gap-3 mt-2 text-xs text-muted">
                   <span>{nbProduits} produits</span>
+
                   {nbAlertes > 0 && (
                     <span className="flex items-center gap-1 text-warning">
                       <AlertTriangle className="w-3 h-3" />

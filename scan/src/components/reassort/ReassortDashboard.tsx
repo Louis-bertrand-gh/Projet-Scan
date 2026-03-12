@@ -69,7 +69,7 @@ export default function ReassortDashboard() {
 
   /* Persister les changements dans le localStorage */
   const sauvegarderCommandes = useCallback((ids: Set<string>) => {
-    localStorage.setItem(COMMANDES_STORAGE_KEY, JSON.stringify([...ids]));
+    localStorage.setItem(COMMANDES_STORAGE_KEY, JSON.stringify(Array.from(ids)));
   }, []);
 
   /** Bascule l'état "à commander" d'un produit */
