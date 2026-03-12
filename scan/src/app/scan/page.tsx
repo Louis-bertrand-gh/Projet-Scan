@@ -74,7 +74,7 @@ export default function ScanPage() {
         </h1>
         <p className="mt-1 text-sm text-muted">
           {etape === "capture" &&
-            "Scannez l'étiquette d'un produit pour extraire les informations ."}
+            "Scannez l'étiquette d'un produit pour extraire les information  ."}
           {etape === "validation" &&
             "Vérifiez les données extraites et validez le contrôle."}
           {etape === "confirme" && "Scan enregistré avec succès !"}
