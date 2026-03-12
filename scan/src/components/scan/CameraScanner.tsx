@@ -114,11 +114,18 @@ export default function CameraScanner({
 
         const stream = await navigator.mediaDevices.getUserMedia(contraintes);
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          streamRef.current = stream;
-          setPhase("live");
-        }
+        streamRef.current = stream;
+        setPhase("live");
+
+        // Attacher le flux au <video> au prochain tick
+        // (le <video> est toujours dans le DOM, mais on attend
+        //  que React ait traité le changement de phase)
+        requestAnimationFrame(() => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(() => {});
+          }
+        });
 
         // Détecter les appareils après obtention de la permission
         const cameras = await detecterAppareils();
@@ -143,11 +150,14 @@ export default function CameraScanner({
               const fallback = await navigator.mediaDevices.getUserMedia({
                 video: true,
               });
-              if (videoRef.current) {
-                videoRef.current.srcObject = fallback;
-                streamRef.current = fallback;
-                setPhase("live");
-              }
+              streamRef.current = fallback;
+              setPhase("live");
+              requestAnimationFrame(() => {
+                if (videoRef.current) {
+                  videoRef.current.srcObject = fallback;
+                  videoRef.current.play().catch(() => {});
+                }
+              });
             } catch {
               setErreur(
                 "Impossible d\u2019accéder à la caméra avec les paramètres demandés.",
@@ -273,7 +283,23 @@ export default function CameraScanner({
       <canvas ref={canvasRef} className="hidden" />
 
       {/* ─── Zone visuelle principale ─────────────────────────── */}
-      <div className="relative rounded-2xl overflow-hidden bg-black aspect-[4/3]">
+      <div className="relative rounded-2xl overflow-hidden bg-black aspect-[4/3] min-h-[50vh] sm:min-h-0">
+        {/* Élément <video> TOUJOURS dans le DOM pour que la ref soit
+            disponible quand getUserMedia retourne le stream. */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          onLoadedMetadata={(e) => {
+            // Safety-net : force play si autoPlay échoue (ex. iOS)
+            (e.target as HTMLVideoElement).play().catch(() => {});
+          }}
+          className={`absolute inset-0 w-full h-full object-cover ${
+            phase === "live" ? "block" : "hidden"
+          }`}
+        />
+
         {/* Flash blanc de capture */}
         {flash && (
           <div className="absolute inset-0 z-50 bg-white animate-camera-flash pointer-events-none" />
@@ -303,16 +329,16 @@ export default function CameraScanner({
           </div>
         )}
 
-        {/* ── Phase LIVE : flux vidéo ───────────────────────────── */}
+        {/* ── Phase LIVE : overlays sur le flux vidéo ──────────── */}
         {phase === "live" && (
-          <div className="relative w-full h-full">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
+          <>
+            {/* Indicateur LIVE (haut-gauche) */}
+            <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-danger/80 backdrop-blur-sm">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="text-white text-xs font-semibold tracking-wide">
+                LIVE
+              </span>
+            </div>
 
             {/* Cadre de guidage */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -328,7 +354,7 @@ export default function CameraScanner({
             {/* Bouton bascule caméra (overlay haut-droite) */}
             <button
               onClick={basculerCamera}
-              className="absolute top-3 right-3 p-2.5 bg-black/50 backdrop-blur-sm rounded-full text-white hover:bg-black/70 transition-colors active:scale-90"
+              className="absolute top-3 right-3 z-10 p-2.5 bg-black/50 backdrop-blur-sm rounded-full text-white hover:bg-black/70 transition-colors active:scale-90"
               title="Changer de caméra"
             >
               <SwitchCamera className="w-5 h-5" />
@@ -338,7 +364,7 @@ export default function CameraScanner({
             <p className="absolute bottom-3 left-0 right-0 text-center text-white/90 text-sm font-medium drop-shadow-lg">
               Cadrez l&apos;étiquette du produit
             </p>
-          </div>
+          </>
         )}
 
         {/* ── Phase REVIEW : aperçu après capture ───────────────── */}
