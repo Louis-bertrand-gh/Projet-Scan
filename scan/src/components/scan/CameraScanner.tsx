@@ -1,22 +1,28 @@
 /* ═══════════════════════════════════════════════════════════════════════
- * CameraScanner.tsx — Module Smart Scan : capture photo professionnelle
+ * CameraScanner.tsx — Module Smart Scan v3
  *
- * Expérience caméra fluide et mobile-first pour CC, CCA, RP et
- * équipiers. Optimise la qualité d'image pour la reconnaissance OCR.
+ * Capture photo professionnelle optimisée OCR, mobile-first.
  *
- * Fonctionnalités :
- * - Détection dynamique de toutes les caméras disponibles
- * - Préférence caméra arrière (facingMode: environment)
- * - Bascule manuelle avant/arrière
- * - Résolution HD (1280×720+) avec compression JPEG 85 %
- * - Flash visuel à la capture + aperçu / refaire / confirmer
- * - Gestion multi-photo (ajouter d'autres photos)
- * - Intégration workflow OCR (base64 → simulation)
+ * Améliorations v3 :
+ * - Zoom natif (videoTrack.applyConstraints) + fallback CSS transform
+ * - Pinch-to-zoom tactile sur la zone vidéo
+ * - Barre de paliers 1× / 2× / 4×
+ * - Navigation par « step » (idle → live → review → gallery → done)
+ *   avec bouton retour protégeant les données déjà scannées
+ * - Centrage vertical/horizontal responsive, pas de scroll parasite
+ * - Transition fluide à l'ouverture de la caméra
+ * - Bouton déclencheur séparé visuellement des contrôles de zoom
  * ═══════════════════════════════════════════════════════════════════════ */
 
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect } from "react";
+import React, {
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  type TouchEvent as ReactTouchEvent,
+} from "react";
 import {
   Camera,
   CameraOff,
@@ -28,25 +34,31 @@ import {
   CheckCircle2,
   AlertTriangle,
   Trash2,
+  ZoomIn,
+  ZoomOut,
+  ArrowLeft,
 } from "lucide-react";
 import { DonneesOCR } from "@/types";
 import { simulerAnalyseOCR } from "@/lib/ocrSimulation";
 
-/* ─── Types internes ─────────────────────────────────────────────────── */
-type Phase =
-  | "idle" // Caméra éteinte
-  | "live" // Flux vidéo actif
-  | "review" // Aperçu de la dernière capture
-  | "gallery" // Galerie de photos confirmées
-  | "analysing" // Analyse OCR en cours
-  | "done"; // Analyse terminée
+/* ─── Types ──────────────────────────────────────────────────────────── */
+
+/** Étapes du workflow — navigation linéaire avec retour possible */
+type Step =
+  | "idle" // 1. Écran d'accueil
+  | "live" // 2. Flux caméra actif
+  | "review" // 3. Aperçu d'une capture
+  | "gallery" // 4. Galerie (ajouter / analyser)
+  | "analysing" // 5. OCR en cours
+  | "done"; // 6. Résultat prêt
 
 interface CameraScannerProps {
-  /** Callback quand l'OCR a extrait les données */
   onResultatOCR: (donnees: DonneesOCR) => void;
-  /** Callback avec la photo capturée (base64) */
   onPhotoCapturee?: (photoBase64: string) => void;
 }
+
+/* Paliers de zoom proposés */
+const ZOOM_STEPS = [1, 2, 4] as const;
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 export default function CameraScanner({
@@ -57,24 +69,32 @@ export default function CameraScanner({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 
-  /* ─── State ────────────────────────────────────────────────── */
-  const [phase, setPhase] = useState<Phase>("idle");
+  /* ─── State : navigation ───────────────────────────────────── */
+  const [step, setStep] = useState<Step>("idle");
   const [erreur, setErreur] = useState<string | null>(null);
 
-  // Appareils détectés
+  /* ─── State : appareils ────────────────────────────────────── */
   const [appareils, setAppareils] = useState<MediaDeviceInfo[]>([]);
   const [appareilIndex, setAppareilIndex] = useState(0);
   const [useFacingBack, setUseFacingBack] = useState(true);
 
-  // Photos
+  /* ─── State : photos ───────────────────────────────────────── */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [photos, setPhotos] = useState<string[]>([]);
-
-  // Flash visuel
   const [flash, setFlash] = useState(false);
 
-  /* ─── Détection des caméras disponibles ────────────────────── */
+  /* ─── State : zoom ─────────────────────────────────────────── */
+  const [zoom, setZoom] = useState(1);
+  const [zoomMin, setZoomMin] = useState(1);
+  const [zoomMax, setZoomMax] = useState(1);
+  const [supportsNativeZoom, setSupportsNativeZoom] = useState(false);
+  /* Pinch tracking refs (non-réactif, pas besoin de re-render) */
+  const pinchStartDist = useRef(0);
+  const pinchStartZoom = useRef(1);
+
+  /* ─── Détection des caméras ────────────────────────────────── */
   const detecterAppareils = useCallback(async () => {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -86,13 +106,34 @@ export default function CameraScanner({
     }
   }, []);
 
+  /* ─── Appliquer le zoom (natif ou CSS) ─────────────────────── */
+  const appliquerZoom = useCallback(
+    async (niveau: number) => {
+      const clamped = Math.min(Math.max(niveau, zoomMin), zoomMax);
+      setZoom(clamped);
+
+      if (supportsNativeZoom && streamRef.current) {
+        const track = streamRef.current.getVideoTracks()[0];
+        try {
+          await track.applyConstraints({
+            advanced: [{ zoom: clamped } as MediaTrackConstraintSet],
+          });
+        } catch {
+          /* Fallback CSS si applyConstraints échoue */
+        }
+      }
+      /* Le zoom CSS est toujours appliqué dans le style inline du <video> */
+    },
+    [zoomMin, zoomMax, supportsNativeZoom],
+  );
+
   /* ─── Démarrer le flux vidéo ───────────────────────────────── */
   const demarrerCamera = useCallback(
     async (deviceId?: string) => {
       try {
         setErreur(null);
 
-        // Arrêter le flux existant
+        /* Couper le flux précédent */
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
@@ -115,11 +156,9 @@ export default function CameraScanner({
         const stream = await navigator.mediaDevices.getUserMedia(contraintes);
 
         streamRef.current = stream;
-        setPhase("live");
+        setStep("live");
 
-        // Attacher le flux au <video> au prochain tick
-        // (le <video> est toujours dans le DOM, mais on attend
-        //  que React ait traité le changement de phase)
+        /* Attacher au <video> au prochain frame (ref toujours dans le DOM) */
         requestAnimationFrame(() => {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
@@ -127,13 +166,29 @@ export default function CameraScanner({
           }
         });
 
-        // Détecter les appareils après obtention de la permission
+        /* Détecter les capabilities de zoom */
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities() as MediaTrackCapabilities & {
+          zoom?: { min: number; max: number; step: number };
+        };
+        if (caps.zoom) {
+          setSupportsNativeZoom(true);
+          setZoomMin(caps.zoom.min);
+          setZoomMax(caps.zoom.max);
+        } else {
+          /* Pas de zoom natif → on offre quand même un zoom CSS jusqu'à 4× */
+          setSupportsNativeZoom(false);
+          setZoomMin(1);
+          setZoomMax(4);
+        }
+        setZoom(1);
+
+        /* Indexer l'appareil actif */
         const cameras = await detecterAppareils();
-        const activeTrack = stream.getVideoTracks()[0];
-        const activeSettings = activeTrack.getSettings();
-        if (activeSettings.deviceId && cameras.length > 0) {
+        const settings = track.getSettings();
+        if (settings.deviceId && cameras.length > 0) {
           const idx = cameras.findIndex(
-            (c) => c.deviceId === activeSettings.deviceId,
+            (c) => c.deviceId === settings.deviceId,
           );
           if (idx !== -1) setAppareilIndex(idx);
         }
@@ -146,22 +201,25 @@ export default function CameraScanner({
           } else if (err.name === "NotFoundError") {
             setErreur("Aucune caméra détectée sur cet appareil.");
           } else if (err.name === "OverconstrainedError") {
+            /* Fallback sans contraintes */
             try {
-              const fallback = await navigator.mediaDevices.getUserMedia({
+              const fb = await navigator.mediaDevices.getUserMedia({
                 video: true,
               });
-              streamRef.current = fallback;
-              setPhase("live");
+              streamRef.current = fb;
+              setStep("live");
               requestAnimationFrame(() => {
                 if (videoRef.current) {
-                  videoRef.current.srcObject = fallback;
+                  videoRef.current.srcObject = fb;
                   videoRef.current.play().catch(() => {});
                 }
               });
+              setSupportsNativeZoom(false);
+              setZoomMin(1);
+              setZoomMax(4);
+              setZoom(1);
             } catch {
-              setErreur(
-                "Impossible d\u2019accéder à la caméra avec les paramètres demandés.",
-              );
+              setErreur("Impossible d\u2019accéder à la caméra.");
             }
           } else {
             setErreur("Erreur d\u2019accès à la caméra. Veuillez réessayer.");
@@ -186,15 +244,43 @@ export default function CameraScanner({
   /* ─── Basculer entre caméras ───────────────────────────────── */
   const basculerCamera = useCallback(() => {
     if (appareils.length > 1) {
-      const nextIndex = (appareilIndex + 1) % appareils.length;
-      setAppareilIndex(nextIndex);
-      setUseFacingBack((prev) => !prev);
-      demarrerCamera(appareils[nextIndex].deviceId);
+      const next = (appareilIndex + 1) % appareils.length;
+      setAppareilIndex(next);
+      setUseFacingBack((p) => !p);
+      demarrerCamera(appareils[next].deviceId);
     } else {
-      setUseFacingBack((prev) => !prev);
+      setUseFacingBack((p) => !p);
       demarrerCamera();
     }
   }, [appareils, appareilIndex, demarrerCamera]);
+
+  /* ─── Pinch-to-zoom (touch events) ─────────────────────────── */
+  const distanceEntreDoigts = (e: ReactTouchEvent) => {
+    const [a, b] = [e.touches[0], e.touches[1]];
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  };
+
+  const handleTouchStart = useCallback(
+    (e: ReactTouchEvent) => {
+      if (e.touches.length === 2) {
+        pinchStartDist.current = distanceEntreDoigts(e);
+        pinchStartZoom.current = zoom;
+      }
+    },
+    [zoom],
+  );
+
+  const handleTouchMove = useCallback(
+    (e: ReactTouchEvent) => {
+      if (e.touches.length === 2) {
+        const dist = distanceEntreDoigts(e);
+        const ratio = dist / pinchStartDist.current;
+        const nouveauZoom = pinchStartZoom.current * ratio;
+        appliquerZoom(nouveauZoom);
+      }
+    },
+    [appliquerZoom],
+  );
 
   /* ─── Capturer une photo ───────────────────────────────────── */
   const capturerPhoto = useCallback(() => {
@@ -208,25 +294,34 @@ export default function CameraScanner({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.drawImage(video, 0, 0);
+    /* Si zoom CSS (pas natif), on crop le centre */
+    if (!supportsNativeZoom && zoom > 1) {
+      const sw = video.videoWidth / zoom;
+      const sh = video.videoHeight / zoom;
+      const sx = (video.videoWidth - sw) / 2;
+      const sy = (video.videoHeight - sh) / 2;
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.drawImage(video, 0, 0);
+    }
+
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
 
-    // Flash visuel
     setFlash(true);
     setTimeout(() => setFlash(false), 200);
 
     setPreviewUrl(dataUrl);
     onPhotoCapturee?.(dataUrl);
     arreterCamera();
-    setPhase("review");
-  }, [arreterCamera, onPhotoCapturee]);
+    setStep("review");
+  }, [arreterCamera, onPhotoCapturee, supportsNativeZoom, zoom]);
 
   /* ─── Confirmer la photo → galerie ─────────────────────────── */
   const confirmerPhoto = useCallback(() => {
     if (!previewUrl) return;
     setPhotos((prev) => [...prev, previewUrl]);
     setPreviewUrl(null);
-    setPhase("gallery");
+    setStep("gallery");
   }, [previewUrl]);
 
   /* ─── Refaire la photo ─────────────────────────────────────── */
@@ -235,36 +330,63 @@ export default function CameraScanner({
     demarrerCamera();
   }, [demarrerCamera]);
 
-  /* ─── Ajouter une photo supplémentaire ─────────────────────── */
-  const ajouterAutrePhoto = useCallback(() => {
+  /* ─── Ajouter une photo ────────────────────────────────────── */
+  const ajouterPhoto = useCallback(() => {
     setPreviewUrl(null);
     demarrerCamera();
   }, [demarrerCamera]);
 
-  /* ─── Supprimer une photo de la galerie ────────────────────── */
-  const supprimerPhoto = useCallback((index: number) => {
+  /* ─── Supprimer une photo ──────────────────────────────────── */
+  const supprimerPhoto = useCallback((i: number) => {
     setPhotos((prev) => {
-      const next = prev.filter((_, i) => i !== index);
-      if (next.length === 0) setPhase("idle");
+      const next = prev.filter((_, idx) => idx !== i);
+      if (next.length === 0) setStep("idle");
       return next;
     });
   }, []);
 
-  /* ─── Lancer l'analyse OCR ─────────────────────────────────── */
+  /* ─── Lancer l'OCR ─────────────────────────────────────────── */
   const lancerAnalyse = useCallback(async () => {
-    setPhase("analysing");
+    setStep("analysing");
     const resultat = await simulerAnalyseOCR();
-    setPhase("done");
+    setStep("done");
     onResultatOCR(resultat);
   }, [onResultatOCR]);
+
+  /* ─── Bouton retour intelligent ────────────────────────────── */
+  const retour = useCallback(() => {
+    switch (step) {
+      case "live":
+        arreterCamera();
+        /* Retour vers la galerie si des photos existent, sinon idle */
+        setStep(photos.length > 0 ? "gallery" : "idle");
+        break;
+      case "review":
+        /* Jette l'aperçu, retour en live */
+        setPreviewUrl(null);
+        demarrerCamera();
+        break;
+      case "gallery":
+        /* Ne pas perdre les photos — rester en galerie ou idle si vide */
+        if (photos.length === 0) setStep("idle");
+        break;
+      case "done":
+        /* Retour à la galerie pour ajouter / re-analyser */
+        setStep("gallery");
+        break;
+      default:
+        break;
+    }
+  }, [step, photos.length, arreterCamera, demarrerCamera]);
 
   /* ─── Tout réinitialiser ───────────────────────────────────── */
   const reinitialiser = useCallback(() => {
     arreterCamera();
     setPhotos([]);
     setPreviewUrl(null);
-    setPhase("idle");
+    setStep("idle");
     setErreur(null);
+    setZoom(1);
   }, [arreterCamera]);
 
   /* ─── Cleanup au démontage ─────────────────────────────────── */
@@ -276,46 +398,68 @@ export default function CameraScanner({
     };
   }, []);
 
+  /* ─── Helper : label zoom ──────────────────────────────────── */
+  const zoomLabel = (v: number) => {
+    if (v >= zoomMax) return `${Math.round(zoomMax)}×`;
+    return `${Math.round(v * 10) / 10}×`;
+  };
+
   /* ═══════════════════════════════════════════ RENDU ══════════ */
   return (
-    <div className="w-full max-w-lg mx-auto">
-      {/* Canvas caché pour la capture */}
+    <div className="flex flex-col items-center justify-center w-full max-w-lg mx-auto">
+      {/* Canvas caché */}
       <canvas ref={canvasRef} className="hidden" />
 
       {/* ─── Zone visuelle principale ─────────────────────────── */}
-      <div className="relative rounded-2xl overflow-hidden bg-black aspect-[4/3] min-h-[50vh] sm:min-h-0">
-        {/* Élément <video> TOUJOURS dans le DOM pour que la ref soit
-            disponible quand getUserMedia retourne le stream. */}
+      <div
+        ref={videoContainerRef}
+        className={`relative w-full rounded-2xl overflow-hidden bg-black transition-all duration-500 ease-out ${
+          step === "idle"
+            ? "aspect-square" /* carré invitant au clic */
+            : "aspect-[3/4] min-h-[55vh] sm:min-h-0" /* ratio 3:4 pour le scan */
+        }`}
+        onTouchStart={step === "live" ? handleTouchStart : undefined}
+        onTouchMove={step === "live" ? handleTouchMove : undefined}
+      >
+        {/* ── <video> toujours dans le DOM ─────────────────────── */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
           onLoadedMetadata={(e) => {
-            // Safety-net : force play si autoPlay échoue (ex. iOS)
             (e.target as HTMLVideoElement).play().catch(() => {});
           }}
-          className={`absolute inset-0 w-full h-full object-cover ${
-            phase === "live" ? "block" : "hidden"
+          style={
+            !supportsNativeZoom && zoom > 1
+              ? { transform: `scale(${zoom})`, transformOrigin: "center" }
+              : undefined
+          }
+          className={`absolute inset-0 w-full h-full object-cover transition-transform duration-150 ${
+            step === "live" ? "block" : "hidden"
           }`}
         />
 
-        {/* Flash blanc de capture */}
+        {/* Flash capture */}
         {flash && (
           <div className="absolute inset-0 z-50 bg-white animate-camera-flash pointer-events-none" />
         )}
 
-        {/* ── Phase IDLE ────────────────────────────────────────── */}
-        {phase === "idle" && (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-4 bg-surface-alt">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Camera className="w-8 h-8 text-primary" />
+        {/* ═══ STEP : IDLE ════════════════════════════════════════ */}
+        {step === "idle" && (
+          <button
+            onClick={() => demarrerCamera()}
+            className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-5 bg-surface-alt group cursor-pointer transition-colors hover:bg-surface"
+          >
+            {/* Grande icône invitant à l'action */}
+            <div className="w-24 h-24 rounded-3xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+              <Camera className="w-12 h-12 text-primary" />
             </div>
-            <div className="text-center px-6">
-              <p className="text-on-surface font-medium mb-1">
-                Scanner une étiquette
+            <div className="text-center px-8">
+              <p className="text-on-surface font-semibold text-lg mb-1">
+                Ouvrir la caméra
               </p>
-              <p className="text-muted text-sm">
+              <p className="text-muted text-sm leading-relaxed">
                 Prenez en photo l&apos;étiquette du produit pour extraire
                 automatiquement le lot, la DLC et le nom.
               </p>
@@ -323,22 +467,31 @@ export default function CameraScanner({
             {erreur && (
               <div className="mx-6 p-3 bg-danger/10 border border-danger/20 rounded-lg flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-danger shrink-0 mt-0.5" />
-                <p className="text-danger text-sm">{erreur}</p>
+                <p className="text-danger text-sm text-left">{erreur}</p>
               </div>
             )}
-          </div>
+          </button>
         )}
 
-        {/* ── Phase LIVE : overlays sur le flux vidéo ──────────── */}
-        {phase === "live" && (
+        {/* ═══ STEP : LIVE — overlays caméra ═════════════════════ */}
+        {step === "live" && (
           <>
-            {/* Indicateur LIVE (haut-gauche) */}
+            {/* Badge LIVE */}
             <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-danger/80 backdrop-blur-sm">
               <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
               <span className="text-white text-xs font-semibold tracking-wide">
                 LIVE
               </span>
             </div>
+
+            {/* Bascule caméra */}
+            <button
+              onClick={basculerCamera}
+              className="absolute top-3 right-3 z-10 p-2.5 bg-black/50 backdrop-blur-sm rounded-full text-white hover:bg-black/70 transition-colors active:scale-90"
+              title="Changer de caméra"
+            >
+              <SwitchCamera className="w-5 h-5" />
+            </button>
 
             {/* Cadre de guidage */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -351,25 +504,44 @@ export default function CameraScanner({
               </div>
             </div>
 
-            {/* Bouton bascule caméra (overlay haut-droite) */}
-            <button
-              onClick={basculerCamera}
-              className="absolute top-3 right-3 z-10 p-2.5 bg-black/50 backdrop-blur-sm rounded-full text-white hover:bg-black/70 transition-colors active:scale-90"
-              title="Changer de caméra"
-            >
-              <SwitchCamera className="w-5 h-5" />
-            </button>
-
-            {/* Instruction */}
-            <p className="absolute bottom-3 left-0 right-0 text-center text-white/90 text-sm font-medium drop-shadow-lg">
-              Cadrez l&apos;étiquette du produit
-            </p>
+            {/* Barre zoom intégrée (bas du cadre vidéo) */}
+            <div className="absolute bottom-3 left-0 right-0 z-10 flex items-center justify-center gap-1">
+              <button
+                onClick={() => appliquerZoom(zoom - 0.5)}
+                className="p-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white active:scale-90"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              {ZOOM_STEPS.map((palier) => (
+                <button
+                  key={palier}
+                  onClick={() => appliquerZoom(palier)}
+                  className={`min-w-[40px] py-1 rounded-full text-xs font-bold transition-colors ${
+                    Math.abs(zoom - palier) < 0.3
+                      ? "bg-white text-black"
+                      : "bg-black/40 backdrop-blur-sm text-white"
+                  }`}
+                >
+                  {palier}×
+                </button>
+              ))}
+              <button
+                onClick={() => appliquerZoom(zoom + 0.5)}
+                className="p-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white active:scale-90"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
+              {/* Indicateur zoom courant */}
+              <span className="ml-1 text-[10px] text-white/70 font-medium">
+                {zoomLabel(zoom)}
+              </span>
+            </div>
           </>
         )}
 
-        {/* ── Phase REVIEW : aperçu après capture ───────────────── */}
-        {phase === "review" && previewUrl && (
-          <div className="relative w-full h-full">
+        {/* ═══ STEP : REVIEW ═════════════════════════════════════ */}
+        {step === "review" && previewUrl && (
+          <div className="relative w-full h-full animate-fade-in">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={previewUrl}
@@ -382,9 +554,9 @@ export default function CameraScanner({
           </div>
         )}
 
-        {/* ── Phase GALLERY : photos confirmées ─────────────────── */}
-        {phase === "gallery" && (
-          <div className="w-full h-full bg-surface-alt p-3 flex flex-col">
+        {/* ═══ STEP : GALLERY ════════════════════════════════════ */}
+        {step === "gallery" && (
+          <div className="w-full h-full bg-surface-alt p-3 flex flex-col animate-fade-in">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-on-surface">
                 {photos.length} photo{photos.length > 1 ? "s" : ""} capturée
@@ -421,9 +593,9 @@ export default function CameraScanner({
           </div>
         )}
 
-        {/* ── Phase ANALYSING : OCR en cours ────────────────────── */}
-        {phase === "analysing" && (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-4 bg-surface-alt">
+        {/* ═══ STEP : ANALYSING ══════════════════════════════════ */}
+        {step === "analysing" && (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 bg-surface-alt animate-fade-in">
             <div className="flex gap-2 mb-2">
               {photos.map((p, i) => (
                 <div
@@ -447,9 +619,9 @@ export default function CameraScanner({
           </div>
         )}
 
-        {/* ── Phase DONE : terminé ──────────────────────────────── */}
-        {phase === "done" && (
-          <div className="w-full h-full flex items-center justify-center bg-surface-alt">
+        {/* ═══ STEP : DONE ═══════════════════════════════════════ */}
+        {step === "done" && (
+          <div className="w-full h-full flex items-center justify-center bg-surface-alt animate-fade-in">
             <div className="bg-success/90 rounded-full p-4 animate-bounce">
               <CheckCircle2 className="w-10 h-10 text-white" />
             </div>
@@ -457,43 +629,33 @@ export default function CameraScanner({
         )}
       </div>
 
-      {/* ─── Boutons d'action (zone basse, usage une main) ────── */}
-      <div className="mt-4 space-y-3">
-        {/* ── IDLE → Ouvrir la caméra ───────────────────────────── */}
-        {phase === "idle" && (
-          <button
-            onClick={() => demarrerCamera()}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-primary text-on-primary rounded-xl font-medium shadow-lg hover:bg-primary-dark transition-colors active:scale-[0.97]"
-          >
-            <Camera className="w-5 h-5" />
-            Ouvrir la caméra
-          </button>
-        )}
-
-        {/* ── LIVE → Déclencheur central + contrôles latéraux ──── */}
-        {phase === "live" && (
-          <div className="flex items-center justify-center gap-6">
-            {/* Annuler / retour */}
+      {/* ─── Contrôles bas (séparés du zoom) ──────────────────── */}
+      <div className="w-full mt-5 space-y-3">
+        {/* ── LIVE : Déclencheur + contrôles ───────────────────── */}
+        {step === "live" && (
+          <div className="flex items-center justify-center gap-8">
+            {/* Retour */}
             <button
-              onClick={() => {
-                arreterCamera();
-                setPhase(photos.length > 0 ? "gallery" : "idle");
-              }}
+              onClick={retour}
               className="p-3 bg-surface border border-border text-on-surface rounded-full hover:bg-surface-alt transition-colors"
-              title="Fermer la caméra"
+              title="Retour"
             >
-              <CameraOff className="w-5 h-5" />
+              {photos.length > 0 ? (
+                <ArrowLeft className="w-5 h-5" />
+              ) : (
+                <CameraOff className="w-5 h-5" />
+              )}
             </button>
 
-            {/* Déclencheur principal */}
+            {/* Déclencheur principal — bien séparé visuellement */}
             <button
               onClick={capturerPhoto}
-              className="relative w-[72px] h-[72px] rounded-full bg-white shadow-xl active:scale-90 transition-transform flex items-center justify-center"
+              className="relative w-[76px] h-[76px] rounded-full bg-white shadow-2xl active:scale-90 transition-transform flex items-center justify-center"
               title="Prendre la photo"
             >
               <span className="absolute inset-0 rounded-full border-[4px] border-primary" />
-              <span className="w-[56px] h-[56px] rounded-full bg-primary flex items-center justify-center">
-                <Camera className="w-6 h-6 text-on-primary" />
+              <span className="w-[58px] h-[58px] rounded-full bg-primary flex items-center justify-center">
+                <Camera className="w-7 h-7 text-on-primary" />
               </span>
             </button>
 
@@ -508,8 +670,8 @@ export default function CameraScanner({
           </div>
         )}
 
-        {/* ── REVIEW → Utiliser / Refaire ───────────────────────── */}
-        {phase === "review" && (
+        {/* ── REVIEW : Utiliser / Refaire ──────────────────────── */}
+        {step === "review" && (
           <div className="flex gap-3">
             <button
               onClick={confirmerPhoto}
@@ -521,15 +683,15 @@ export default function CameraScanner({
             <button
               onClick={refairePhoto}
               className="flex items-center justify-center gap-2 px-4 py-3.5 bg-surface border border-border text-on-surface rounded-xl font-medium hover:bg-surface-alt transition-colors"
-              title="Reprendre la photo"
+              title="Reprendre"
             >
               <RotateCcw className="w-5 h-5" />
             </button>
           </div>
         )}
 
-        {/* ── GALLERY → Analyser / Ajouter ──────────────────────── */}
-        {phase === "gallery" && (
+        {/* ── GALLERY : Analyser / Ajouter ─────────────────────── */}
+        {step === "gallery" && (
           <div className="flex gap-3">
             <button
               onClick={lancerAnalyse}
@@ -540,7 +702,7 @@ export default function CameraScanner({
               {photos.length > 1 ? "s" : ""})
             </button>
             <button
-              onClick={ajouterAutrePhoto}
+              onClick={ajouterPhoto}
               className="flex items-center justify-center gap-2 px-4 py-3.5 bg-surface border border-border text-on-surface rounded-xl font-medium hover:bg-surface-alt transition-colors"
               title="Ajouter une photo"
             >
@@ -549,15 +711,24 @@ export default function CameraScanner({
           </div>
         )}
 
-        {/* ── DONE → Nouveau scan ───────────────────────────────── */}
-        {phase === "done" && (
-          <button
-            onClick={reinitialiser}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-surface border border-border text-on-surface rounded-xl font-medium hover:bg-surface-alt transition-colors"
-          >
-            <RotateCcw className="w-5 h-5" />
-            Nouveau scan
-          </button>
+        {/* ── DONE : Retour galerie / Nouveau scan ─────────────── */}
+        {step === "done" && (
+          <div className="flex gap-3">
+            <button
+              onClick={retour}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3.5 bg-surface border border-border text-on-surface rounded-xl font-medium hover:bg-surface-alt transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              Retour aux photos
+            </button>
+            <button
+              onClick={reinitialiser}
+              className="flex items-center justify-center gap-2 px-4 py-3.5 bg-surface border border-border text-muted rounded-xl font-medium hover:bg-surface-alt transition-colors"
+              title="Tout recommencer"
+            >
+              <RotateCcw className="w-5 h-5" />
+            </button>
+          </div>
         )}
       </div>
     </div>
