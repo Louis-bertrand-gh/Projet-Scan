@@ -1,17 +1,20 @@
 /* ═══════════════════════════════════════════════════════════════════════
- * CameraScanner.tsx — Module Smart Scan v3
+ * CameraScanner.tsx — Module Smart Scan v4
  *
  * Capture photo professionnelle optimisée OCR, mobile-first.
  *
- * Améliorations v3 :
+ * Améliorations v4 :
  * - Zoom natif (videoTrack.applyConstraints) + fallback CSS transform
- * - Pinch-to-zoom tactile sur la zone vidéo
+ * - Pinch-to-zoom via listeners natifs (passive: false) + throttle rAF
+ * - Indicateur de zoom proéminent lors du balayage (ex: "×2.5")
  * - Barre de paliers 1× / 2× / 4×
  * - Navigation par « step » (idle → live → review → gallery → done)
  *   avec bouton retour protégeant les données déjà scannées
+ * - Restauration de la galerie au retour depuis la validation OCR
+ * - Zone "Ouvrir la caméra" avec bordure thématique et effet pulse
  * - Centrage vertical/horizontal responsive, pas de scroll parasite
- * - Transition fluide à l'ouverture de la caméra
  * - Bouton déclencheur séparé visuellement des contrôles de zoom
+ * - will-change: transform pour fluidité GPU du zoom CSS
  * ═══════════════════════════════════════════════════════════════════════ */
 
 "use client";
@@ -21,7 +24,6 @@ import React, {
   useState,
   useCallback,
   useEffect,
-  type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
   Camera,
@@ -44,7 +46,7 @@ import { simulerAnalyseOCR } from "@/lib/ocrSimulation";
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
 /** Étapes du workflow — navigation linéaire avec retour possible */
-type Step =
+export type Step =
   | "idle" // 1. Écran d'accueil
   | "live" // 2. Flux caméra actif
   | "review" // 3. Aperçu d'une capture
@@ -55,15 +57,30 @@ type Step =
 interface CameraScannerProps {
   onResultatOCR: (donnees: DonneesOCR) => void;
   onPhotoCapturee?: (photoBase64: string) => void;
+  /** Photos initiales (restauration galerie après retour de validation) */
+  initialPhotos?: string[];
+  /** Callback de synchronisation des photos avec le composant parent */
+  onPhotosChange?: (photos: string[]) => void;
 }
 
 /* Paliers de zoom proposés */
 const ZOOM_STEPS = [1, 2, 4] as const;
 
+/* ─── Utilitaire : distance entre deux doigts (TouchList natif) ────── */
+function distanceEntreDoigts(touches: TouchList): number {
+  const [a, b] = [touches[0], touches[1]];
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+/** Durée d'affichage de l'indicateur de zoom après fin du pinch (ms) */
+const ZOOM_INDICATOR_DELAY = 900;
+
 /* ═══════════════════════════════════════════════════════════════════════ */
 export default function CameraScanner({
   onResultatOCR,
   onPhotoCapturee,
+  initialPhotos,
+  onPhotosChange,
 }: CameraScannerProps) {
   /* ─── Refs ─────────────────────────────────────────────────── */
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -72,7 +89,9 @@ export default function CameraScanner({
   const videoContainerRef = useRef<HTMLDivElement>(null);
 
   /* ─── State : navigation ───────────────────────────────────── */
-  const [step, setStep] = useState<Step>("idle");
+  const [step, setStep] = useState<Step>(
+    initialPhotos && initialPhotos.length > 0 ? "gallery" : "idle",
+  );
   const [erreur, setErreur] = useState<string | null>(null);
 
   /* ─── State : appareils ────────────────────────────────────── */
@@ -82,7 +101,7 @@ export default function CameraScanner({
 
   /* ─── State : photos ───────────────────────────────────────── */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<string[]>(initialPhotos ?? []);
   const [flash, setFlash] = useState(false);
 
   /* ─── State : zoom ─────────────────────────────────────────── */
@@ -90,9 +109,22 @@ export default function CameraScanner({
   const [zoomMin, setZoomMin] = useState(1);
   const [zoomMax, setZoomMax] = useState(1);
   const [supportsNativeZoom, setSupportsNativeZoom] = useState(false);
-  /* Pinch tracking refs (non-réactif, pas besoin de re-render) */
+  /* Indicateur de zoom (affiché lors du pinch) */
+  const [showZoomIndicator, setShowZoomIndicator] = useState(false);
+  const zoomIndicatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* Pinch tracking refs (non-réactif, évite les re-renders inutiles) */
   const pinchStartDist = useRef(0);
   const pinchStartZoom = useRef(1);
+
+  /** Ref miroir du zoom pour lecture dans les listeners natifs sans re-render */
+  const zoomRef = useRef(1);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  /* ─── Synchronisation des photos avec le parent ────────────── */
+  useEffect(() => {
+    onPhotosChange?.(photos);
+  }, [photos, onPhotosChange]);
 
   /* ─── Détection des caméras ────────────────────────────────── */
   const detecterAppareils = useCallback(async () => {
@@ -254,33 +286,64 @@ export default function CameraScanner({
     }
   }, [appareils, appareilIndex, demarrerCamera]);
 
-  /* ─── Pinch-to-zoom (touch events) ─────────────────────────── */
-  const distanceEntreDoigts = (e: ReactTouchEvent) => {
-    const [a, b] = [e.touches[0], e.touches[1]];
-    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  };
+  /* ─── Pinch-to-zoom natif (passive: false pour preventDefault) ── */
+  useEffect(() => {
+    const container = videoContainerRef.current;
+    if (!container || step !== "live") return;
 
-  const handleTouchStart = useCallback(
-    (e: ReactTouchEvent) => {
-      if (e.touches.length === 2) {
-        pinchStartDist.current = distanceEntreDoigts(e);
-        pinchStartZoom.current = zoom;
-      }
-    },
-    [zoom],
-  );
+    let rafId: number | null = null;
 
-  const handleTouchMove = useCallback(
-    (e: ReactTouchEvent) => {
+    /** Début du pinch : mémorise la distance et le zoom courant */
+    const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        const dist = distanceEntreDoigts(e);
-        const ratio = dist / pinchStartDist.current;
-        const nouveauZoom = pinchStartZoom.current * ratio;
-        appliquerZoom(nouveauZoom);
+        e.preventDefault();
+        pinchStartDist.current = distanceEntreDoigts(e.touches);
+        pinchStartZoom.current = zoomRef.current;
+        setShowZoomIndicator(true);
+        if (zoomIndicatorTimer.current) {
+          clearTimeout(zoomIndicatorTimer.current);
+          zoomIndicatorTimer.current = null;
+        }
       }
-    },
-    [appliquerZoom],
-  );
+    };
+
+    /** Mouvement du pinch : calcule le ratio et applique le zoom (throttlé rAF) */
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        /* Capturer la distance immédiatement avant recyclage de l'événement */
+        const dist = distanceEntreDoigts(e.touches);
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          const ratio = dist / pinchStartDist.current;
+          appliquerZoom(pinchStartZoom.current * ratio);
+          rafId = null;
+        });
+      }
+    };
+
+    /** Fin du pinch : masque l'indicateur après un délai */
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        zoomIndicatorTimer.current = setTimeout(() => {
+          setShowZoomIndicator(false);
+          zoomIndicatorTimer.current = null;
+        }, ZOOM_INDICATOR_DELAY);
+      }
+    };
+
+    container.addEventListener("touchstart", onTouchStart, { passive: false });
+    container.addEventListener("touchmove", onTouchMove, { passive: false });
+    container.addEventListener("touchend", onTouchEnd);
+
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (zoomIndicatorTimer.current) clearTimeout(zoomIndicatorTimer.current);
+    };
+  }, [step, appliquerZoom]);
 
   /* ─── Capturer une photo ───────────────────────────────────── */
   const capturerPhoto = useCallback(() => {
@@ -413,13 +476,11 @@ export default function CameraScanner({
       {/* ─── Zone visuelle principale ─────────────────────────── */}
       <div
         ref={videoContainerRef}
-        className={`relative w-full rounded-2xl overflow-hidden bg-black transition-all duration-500 ease-out ${
+        className={`relative w-full rounded-2xl overflow-hidden transition-all duration-500 ease-out ${
           step === "idle"
-            ? "aspect-square" /* carré invitant au clic */
-            : "aspect-[3/4] min-h-[55vh] sm:min-h-0" /* ratio 3:4 pour le scan */
+            ? "aspect-square border-2 border-primary/30 hover:border-primary/50 bg-surface-alt"
+            : "aspect-[3/4] min-h-[55vh] sm:min-h-0 bg-black"
         }`}
-        onTouchStart={step === "live" ? handleTouchStart : undefined}
-        onTouchMove={step === "live" ? handleTouchMove : undefined}
       >
         {/* ── <video> toujours dans le DOM ─────────────────────── */}
         <video
@@ -432,7 +493,11 @@ export default function CameraScanner({
           }}
           style={
             !supportsNativeZoom && zoom > 1
-              ? { transform: `scale(${zoom})`, transformOrigin: "center" }
+              ? {
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "center",
+                  willChange: "transform",
+                }
               : undefined
           }
           className={`absolute inset-0 w-full h-full object-cover transition-transform duration-150 ${
@@ -449,10 +514,10 @@ export default function CameraScanner({
         {step === "idle" && (
           <button
             onClick={() => demarrerCamera()}
-            className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-5 bg-surface-alt group cursor-pointer transition-colors hover:bg-surface"
+            className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-5 group cursor-pointer transition-colors hover:bg-surface/50"
           >
-            {/* Grande icône invitant à l'action */}
-            <div className="w-24 h-24 rounded-3xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+            {/* Grande icône invitant à l'action — pulsation subtile */}
+            <div className="w-24 h-24 rounded-3xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-105 transition-all duration-300 animate-idle-pulse">
               <Camera className="w-12 h-12 text-primary" />
             </div>
             <div className="text-center px-8">
@@ -492,6 +557,15 @@ export default function CameraScanner({
             >
               <SwitchCamera className="w-5 h-5" />
             </button>
+
+            {/* Indicateur de zoom central (visible pendant le pinch) */}
+            {showZoomIndicator && (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
+                <span className="px-4 py-2 rounded-full bg-black/60 backdrop-blur-sm text-white text-lg font-bold tabular-nums">
+                  ×{Math.round(zoom * 10) / 10}
+                </span>
+              </div>
+            )}
 
             {/* Cadre de guidage */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

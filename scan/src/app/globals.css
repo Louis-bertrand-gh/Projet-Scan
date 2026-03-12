@@ -108,6 +108,23 @@
     }
   }
 
+  /* Pulsation subtile de l'icône caméra dans l'écran d'accueil */
+  .animate-idle-pulse {
+    animation: idlePulse 3s ease-in-out infinite;
+  }
+
+  @keyframes idlePulse {
+    0%,
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      transform: scale(1.06);
+      box-shadow: 0 0 20px -2px var(--color-primary);
+    }
+  }
+
   /* Flash blanc lors de la capture photo (Smart Scan) */
   .animate-camera-flash {
     animation: cameraFlash 0.2s ease-out forwards;

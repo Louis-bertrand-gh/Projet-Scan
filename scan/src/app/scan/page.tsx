@@ -37,6 +37,8 @@ export default function ScanPage() {
   const [donneesOCR, setDonneesOCR] = useState<DonneesOCR | null>(null);
   const [derniereValidation, setDerniereValidation] =
     useState<DonneesValidees | null>(null);
+  /** Photos capturées — persistées entre les étapes pour le retour depuis validation */
+  const [photosCapturees, setPhotosCapturees] = useState<string[]>([]);
 
   /**
    * Callback appelé par le CameraScanner quand l'OCR a
@@ -57,11 +59,21 @@ export default function ScanPage() {
     /* TODO (production) : POST vers l'API pour sauvegarder le scan */
   }, []);
 
-  /** Réinitialise le workflow pour un nouveau scan */
+  /**
+   * Retour vers la capture en conservant les photos existantes.
+   * Utilisé quand l'utilisateur annule la validation OCR.
+   */
+  const retourVersCapture = useCallback(() => {
+    setEtape("capture");
+    setDonneesOCR(null);
+  }, []);
+
+  /** Réinitialise entièrement le workflow pour un tout nouveau scan */
   const nouveauScan = useCallback(() => {
     setEtape("capture");
     setDonneesOCR(null);
     setDerniereValidation(null);
+    setPhotosCapturees([]);
   }, []);
 
   return (
@@ -133,7 +145,11 @@ export default function ScanPage() {
       <div className="max-w-2xl mx-auto">
         {/* Étape 1 : Capture photo */}
         {etape === "capture" && (
-          <CameraScanner onResultatOCR={handleResultatOCR} />
+          <CameraScanner
+            onResultatOCR={handleResultatOCR}
+            initialPhotos={photosCapturees}
+            onPhotosChange={setPhotosCapturees}
+          />
         )}
 
         {/* Étape 2 : Validation des données OCR */}
@@ -142,7 +158,7 @@ export default function ScanPage() {
             <ValidationForm
               donneesOCR={donneesOCR}
               onValider={handleValidation}
-              onAnnuler={nouveauScan}
+              onAnnuler={retourVersCapture}
             />
           </div>
         )}
