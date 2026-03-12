@@ -107,4 +107,18 @@
       transform: translateY(0);
     }
   }
+
+  /* Flash blanc lors de la capture photo (Smart Scan) */
+  .animate-camera-flash {
+    animation: cameraFlash 0.2s ease-out forwards;
+  }
+
+  @keyframes cameraFlash {
+    0% {
+      opacity: 0.9;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
 }
