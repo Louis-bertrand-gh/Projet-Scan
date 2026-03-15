@@ -8,12 +8,15 @@
 "use client";
 
 import React, { useState } from "react";
-import { MapPin, ChevronDown, ScanLine, User } from "lucide-react";
+import { MapPin, ChevronDown, ScanLine, LogOut } from "lucide-react";
 import { useApp } from "@/contexts/AppContext";
 
 export default function Header() {
-  const { siteActif, sitesAccessibles, changerSite, utilisateur } = useApp();
+  const { siteActif, sitesAccessibles, changerSite, utilisateur, deconnecter } =
+    useApp();
   const [menuOuvert, setMenuOuvert] = useState(false);
+
+  if (!siteActif || !utilisateur) return null;
 
   return (
     <header className="lg:hidden sticky top-0 z-40 bg-surface border-b border-border">
@@ -80,10 +83,16 @@ export default function Header() {
           )}
         </div>
 
-        {/* ─── Avatar utilisateur ───────────────────────────────── */}
-        <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-          <User className="w-4 h-4 text-on-primary" />
-        </div>
+        {/* ─── Déconnexion rapide ───────────────────────────────── */}
+        <button
+          onClick={() => {
+            void deconnecter();
+          }}
+          className="w-8 h-8 rounded-full bg-primary flex items-center justify-center"
+          title="Déconnexion"
+        >
+          <LogOut className="w-4 h-4 text-on-primary" />
+        </button>
       </div>
     </header>
   );

@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
  * types.ts — Modèle de données complet de l'application Scan
  *
- * Structure hiérarchique : Sites > Points de Vente > Catégories > Produits
+ * Structure hiérarchique : Sites > Emplacements > Catégories > Produits
  * Conforme au MCD HACCP pour la traçabilité alimentaire.
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -9,11 +9,12 @@
 /**
  * Rôles possibles dans l'application :
  * - admin : Accès total (siège / direction)
- * - cc : Chef de Cuisine — gestion d'un ou plusieurs sites
- * - rp : Responsable Point de Vente — gestion d'un PDV
+ * - cc : Chef de camp — gestion d'un ou plusieurs sites
+ * - cca : Chef de camp adjoint
+ * - rp : Responsable Emplacement — gestion d'un emplacement
  * - equipier : Équipier terrain — scan et saisie uniquement
  */
-export type UserRole = "admin" | "cc" | "rp" | "equipier";
+export type UserRole = "admin" | "cc" | "cca" | "rp" | "equipier";
 
 /* ─── Utilisateur ────────────────────────────────────────────────────── */
 export interface User {
@@ -33,23 +34,24 @@ export interface Site {
   nom: string;
   /** Ville ou localisation du camping */
   localisation: string;
-  /** Liste des identifiants de points de vente rattachés */
-  pointDeVenteIds: string[];
+  /** Liste des identifiants d'emplacements rattachés */
+  emplacementIds: string[];
 }
 
-/* ─── Point de Vente (PDV) ───────────────────────────────────────────── */
+/* ─── Emplacement ────────────────────────────────────────────────────── */
 /**
- * Un Point de Vente représente un lieu de restauration au sein d'un site
- * (ex: Pizzeria, Bar, Cuisine centrale).
+ * Un Emplacement représente un lieu de stockage ou d'utilisation au sein
+ * d'un site (ex: Réserve sèche, Cuisine, Chambre froide, Chambre négative,
+ * Frigo bar, Congélateur bar, etc.).
  */
-export interface PointDeVente {
+export interface Emplacement {
   id: string;
   nom: string;
   /** Site parent */
   siteId: string;
   /** Icône descriptive (nom Lucide) */
   icone: string;
-  /** Catégories de produits disponibles dans ce PDV */
+  /** Catégories de produits disponibles dans cet emplacement */
   categorieIds: string[];
 }
 
@@ -68,8 +70,8 @@ export interface Produit {
   id: string;
   nom: string;
   categorieId: string;
-  /** Points de vente où ce produit est référencé */
-  pointDeVenteIds: string[];
+  /** Emplacements où ce produit est référencé */
+  emplacementIds: string[];
   /** Unité de mesure (kg, L, pièce, etc.) */
   unite: string;
   /** Seuil en-dessous duquel on déclenche un réassort */
@@ -82,19 +84,19 @@ export interface Produit {
   temperatureConservation?: number;
 }
 
-/* ─── Scan HACCP (résultat d'un contrôle) ────────────────────────────── */
+/* ─── Capture HACCP (résultat d'un contrôle) ─────────────────────────── */
 /**
- * Représente un scan de traçabilité effectué par un utilisateur.
+ * Représente une capture de traçabilité effectuée par un utilisateur.
  * Contient les données extraites par OCR puis validées manuellement.
  */
-export interface ScanHACCP {
+export interface CaptureHACCP {
   id: string;
-  produitId: string;
-  pointDeVenteId: string;
-  /** Identifiant de l'utilisateur ayant réalisé le scan */
+  produitId?: string;
+  emplacementId: string;
+  /** Identifiant de l'utilisateur ayant réalisé la capture */
   userId: string;
-  /** Date et heure du scan */
-  dateScan: string;
+  /** Date et heure de la capture */
+  dateCapture: string;
   /** Numéro de lot extrait de l'étiquette */
   numeroLot: string;
   /** Date Limite de Consommation */
@@ -109,7 +111,7 @@ export interface ScanHACCP {
   conforme: boolean;
   /** Commentaire optionnel de l'utilisateur */
   commentaire?: string;
-  /** URL de la photo capturée (base64 ou blob) */
+  /** URL de la photo dans le bucket Supabase Storage */
   photoUrl?: string;
 }
 
@@ -121,6 +123,14 @@ export interface DonneesOCR {
   nomProduit: string;
   /** Niveau de confiance de l'extraction (0 à 1) */
   confiance: number;
+  /** Confiance par champ pour guider la validation utilisateur */
+  confianceChamps?: {
+    numeroLot: number;
+    dlc: number;
+    nomProduit: number;
+  };
+  /** Texte brut OCR (utile pour debug et amélioration parsing) */
+  texteBrut?: string;
 }
 
 /* ─── État de réassort d'un produit ──────────────────────────────────── */

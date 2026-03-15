@@ -13,10 +13,13 @@ import React from "react";
 import { Palette, User, MapPin, Info, Check } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useApp } from "@/contexts/AppContext";
+import { getRoleLabel } from "@/utils/roles";
 
 export default function ParametresPage() {
   const { themeActif, themesDisponibles, changerTheme } = useTheme();
-  const { utilisateur, siteActif, pdvDuSite } = useApp();
+  const { utilisateur, siteActif, emplacementsDuSite } = useApp();
+
+  if (!utilisateur || !siteActif) return null;
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl">
@@ -126,8 +129,8 @@ export default function ParametresPage() {
               <h3 className="font-semibold text-on-surface text-lg">
                 {utilisateur.prenom} {utilisateur.nom}
               </h3>
-              <p className="text-muted text-sm capitalize">
-                {utilisateur.role}
+              <p className="text-muted text-sm">
+                {getRoleLabel(utilisateur.role)}
               </p>
             </div>
           </div>
@@ -141,8 +144,8 @@ export default function ParametresPage() {
             </div>
             <div className="p-3 rounded-lg bg-surface-alt">
               <p className="text-xs text-muted mb-0.5">Rôle</p>
-              <p className="text-sm font-medium text-on-surface capitalize">
-                {utilisateur.role}
+              <p className="text-sm font-medium text-on-surface">
+                {getRoleLabel(utilisateur.role)}
               </p>
             </div>
             <div className="p-3 rounded-lg bg-surface-alt">
@@ -172,15 +175,15 @@ export default function ParametresPage() {
           </div>
           <div>
             <p className="text-xs text-muted mb-2">
-              Points de vente ({pdvDuSite.length})
+              Emplacements ({emplacementsDuSite.length})
             </p>
             <div className="flex flex-wrap gap-2">
-              {pdvDuSite.map((pdv) => (
+              {emplacementsDuSite.map((emp) => (
                 <span
-                  key={pdv.id}
+                  key={emp.id}
                   className="px-3 py-1 rounded-lg bg-surface-alt text-on-surface text-sm border border-border"
                 >
-                  {pdv.nom}
+                  {emp.nom}
                 </span>
               ))}
             </div>

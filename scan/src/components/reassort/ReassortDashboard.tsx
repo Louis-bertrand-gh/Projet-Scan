@@ -2,7 +2,7 @@
  * ReassortDashboard.tsx — Dashboard interactif de gestion du réassort
  *
  * Vue complète permettant de :
- * - Filtrer les produits par point de vente
+ * - Filtrer les produits par emplacement
  * - Visualiser l'état du stock de chaque produit
  * - Marquer les produits "à commander" avec état persistant
  * - Voir un récapitulatif des commandes à passer
@@ -24,7 +24,7 @@ import {
   Search,
 } from "lucide-react";
 import { StatutReassort } from "@/types";
-import { produits, pointsDeVente, categories } from "@/data/mockData";
+import { produits, emplacements, categories } from "@/data/mockData";
 import { useApp } from "@/contexts/AppContext";
 import ProductCard from "./ProductCard";
 
@@ -47,12 +47,22 @@ function calculerStatut(stockActuel: number, seuil: number): StatutReassort {
 }
 
 export default function ReassortDashboard() {
-  const { siteActif, pdvActif, changerPdv, pdvDuSite } = useApp();
+  const {
+    siteActif,
+    emplacementActif,
+    changerEmplacement,
+    emplacementsDuSite,
+  } = useApp();
 
   /* ─── État des commandes (persisté en localStorage) ────────── */
   const [commandeIds, setCommandeIds] = useState<Set<string>>(new Set());
   const [recherche, setRecherche] = useState("");
   const [filtreCategorie, setFiltreCategorie] = useState<string>("all");
+
+  const emplacementIdsDuSite = useMemo(
+    () => new Set(emplacementsDuSite.map((e) => e.id)),
+    [emplacementsDuSite],
+  );
 
   /* Restaurer les commandes depuis le localStorage au montage */
   useEffect(() => {
@@ -94,15 +104,17 @@ export default function ReassortDashboard() {
 
   /* ─── Filtrage des produits ────────────────────────────────── */
   const produitsFiltres = useMemo(() => {
-    return produits.filter((p) => {
-      /* Filtre par point de vente actif */
-      if (pdvActif && !p.pointDeVenteIds.includes(pdvActif.id)) return false;
+    const termeRecherche = recherche.trim().toLowerCase();
 
-      /* Filtre par site : on n'affiche que les produits des PDV du site */
-      if (!pdvActif) {
-        const pdvIdsDuSite = pdvDuSite.map((pdv) => pdv.id);
-        const produitDansSite = p.pointDeVenteIds.some((id) =>
-          pdvIdsDuSite.includes(id),
+    return produits.filter((p) => {
+      /* Filtre par emplacement actif */
+      if (emplacementActif && !p.emplacementIds.includes(emplacementActif.id))
+        return false;
+
+      /* Filtre par site : on n'affiche que les produits des emplacements du site */
+      if (!emplacementActif) {
+        const produitDansSite = p.emplacementIds.some((id) =>
+          emplacementIdsDuSite.has(id),
         );
         if (!produitDansSite) return false;
       }
@@ -113,14 +125,13 @@ export default function ReassortDashboard() {
       }
 
       /* Filtre par recherche textuelle */
-      if (recherche) {
-        const termeRecherche = recherche.toLowerCase();
+      if (termeRecherche) {
         return p.nom.toLowerCase().includes(termeRecherche);
       }
 
       return true;
     });
-  }, [pdvActif, pdvDuSite, filtreCategorie, recherche]);
+  }, [emplacementActif, emplacementIdsDuSite, filtreCategorie, recherche]);
 
   /* ─── Statistiques ─────────────────────────────────────────── */
   const stats = useMemo(() => {
@@ -151,12 +162,12 @@ export default function ReassortDashboard() {
       {/* ─── En-tête ──────────────────────────────────────────── */}
       <div>
         <h2 className="text-2xl font-bold text-on-surface">
-          Réassort — {siteActif.nom}
+          Réassort — {siteActif?.nom}
         </h2>
         <p className="text-muted text-sm mt-1">
-          {pdvActif
-            ? `Point de vente : ${pdvActif.nom}`
-            : "Tous les points de vente"}
+          {emplacementActif
+            ? `Emplacement : ${emplacementActif.nom}`
+            : "Tous les emplacements"}
         </p>
       </div>
 
@@ -198,21 +209,21 @@ export default function ReassortDashboard() {
 
       {/* ─── Filtres ──────────────────────────────────────────── */}
       <div className="flex flex-col lg:flex-row gap-3">
-        {/* Filtre par PDV */}
+        {/* Filtre par emplacement */}
         <div className="flex-1">
           <label className="flex items-center gap-1.5 text-xs font-medium text-muted mb-1">
             <Filter className="w-3 h-3" />
-            Point de Vente
+            Emplacement
           </label>
           <select
-            value={pdvActif?.id || ""}
-            onChange={(e) => changerPdv(e.target.value || null)}
+            value={emplacementActif?.id || ""}
+            onChange={(e) => changerEmplacement(e.target.value || null)}
             className="w-full px-3 py-2 rounded-xl bg-surface border border-border text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
           >
-            <option value="">Tous les PDV</option>
-            {pdvDuSite.map((pdv) => (
-              <option key={pdv.id} value={pdv.id}>
-                {pdv.nom}
+            <option value="">Tous les emplacements</option>
+            {emplacementsDuSite.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.nom}
               </option>
             ))}
           </select>

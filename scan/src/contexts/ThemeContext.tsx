@@ -15,6 +15,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useMemo,
 } from "react";
 import { Theme } from "@/types";
 import { themes, themeParDefaut } from "@/data/themes";
@@ -88,12 +89,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     [appliquerCouleurs],
   );
 
+  const value = useMemo(
+    () => ({ themeActif, themesDisponibles: themes, changerTheme }),
+    [themeActif, changerTheme],
+  );
+
   return (
-    <ThemeContext.Provider
-      value={{ themeActif, themesDisponibles: themes, changerTheme }}
-    >
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }
 

@@ -11,15 +11,104 @@
 "use client";
 
 import React from "react";
+import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { ScanLine } from "lucide-react";
 import Sidebar from "./Sidebar";
 import BottomNav from "./BottomNav";
 import Header from "./Header";
+import { useApp } from "@/contexts/AppContext";
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 export default function Layout({ children }: LayoutProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { chargement, erreur, utilisateur } = useApp();
+  const estRouteAuth = pathname.startsWith("/auth");
+  const estRouteConfirmationInscription = pathname.startsWith(
+    "/auth/inscription/confirmation",
+  );
+
+  useEffect(() => {
+    if (chargement) return;
+
+    if (!utilisateur && !estRouteAuth) {
+      router.replace("/auth");
+      return;
+    }
+
+    if (utilisateur && estRouteAuth && !estRouteConfirmationInscription) {
+      router.replace("/");
+    }
+  }, [
+    chargement,
+    estRouteAuth,
+    estRouteConfirmationInscription,
+    router,
+    utilisateur,
+  ]);
+
+  /* ─── Écran de chargement ──────────────────────────────────── */
+  if (chargement) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-muted">
+          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center animate-pulse">
+            <ScanLine className="w-7 h-7 text-on-primary" />
+          </div>
+          <p className="text-sm">Chargement…</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Page d'authentification sans chrome applicatif ───────── */
+  if (estRouteAuth) {
+    if (utilisateur && !estRouteConfirmationInscription) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-muted">
+            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center animate-pulse">
+              <ScanLine className="w-7 h-7 text-on-primary" />
+            </div>
+            <p className="text-sm">Redirection…</p>
+          </div>
+        </div>
+      );
+    }
+
+    return <div className="min-h-screen bg-background">{children}</div>;
+  }
+
+  /* ─── Invité non connecté : redirection vers /auth ─────────── */
+  if (!utilisateur) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-muted">
+          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center animate-pulse">
+            <ScanLine className="w-7 h-7 text-on-primary" />
+          </div>
+          <p className="text-sm">Redirection vers la connexion…</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Message d'erreur ─────────────────────────────────────── */
+  if (erreur) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="text-center space-y-2">
+          <p className="text-danger font-medium">Erreur de connexion</p>
+          <p className="text-muted text-sm">{erreur}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-on-background">
       {/* ─── Sidebar Desktop (cachée sur mobile) ─────────────── */}

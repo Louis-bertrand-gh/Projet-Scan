@@ -9,7 +9,7 @@
 
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import Link from "next/link";
 import {
   ScanLine,
@@ -23,31 +23,71 @@ import {
   Thermometer,
 } from "lucide-react";
 import { useApp } from "@/contexts/AppContext";
-import { produits, historiqueScans, pointsDeVente } from "@/data/mockData";
+import { produits, historiqueCaptures, emplacements } from "@/data/mockData";
 
 export default function DashboardPage() {
-  const { siteActif, pdvDuSite } = useApp();
+  const { siteActif, emplacementsDuSite } = useApp();
 
   /* ─── Calcul des KPI du site ───────────────────────────────── */
-  const pdvIdsDuSite = pdvDuSite.map((p) => p.id);
+  const emplacementIdsDuSite = useMemo(
+    () => new Set(emplacementsDuSite.map((e) => e.id)),
+    [emplacementsDuSite],
+  );
 
   /* Produits du site actif */
-  const produitsDuSite = produits.filter((p) =>
-    p.pointDeVenteIds.some((id) => pdvIdsDuSite.includes(id)),
+  const produitsDuSite = useMemo(
+    () =>
+      produits.filter((p) =>
+        p.emplacementIds.some((id) => emplacementIdsDuSite.has(id)),
+      ),
+    [emplacementIdsDuSite],
   );
 
   /* Produits en alerte (stock ≤ seuil) */
-  const produitsEnAlerte = produitsDuSite.filter(
-    (p) => p.stockActuel <= p.seuilReassort,
+  const produitsEnAlerte = useMemo(
+    () => produitsDuSite.filter((p) => p.stockActuel <= p.seuilReassort),
+    [produitsDuSite],
   );
 
   /* Produits critiques (stock = 0) */
-  const produitsCritiques = produitsDuSite.filter((p) => p.stockActuel <= 0);
+  const produitsCritiques = useMemo(
+    () => produitsDuSite.filter((p) => p.stockActuel <= 0),
+    [produitsDuSite],
+  );
 
   /* Scans du jour (simulation) */
-  const scansAujourdhui = historiqueScans.filter((s) =>
-    s.dateScan.startsWith("2026-03-12"),
+  const scansAujourdhui = useMemo(() => {
+    const aujourdHui = new Date().toISOString().slice(0, 10);
+    return historiqueCaptures.filter((s) =>
+      s.dateCapture.startsWith(aujourdHui),
+    );
+  }, []);
+
+  const emplacementParId = useMemo(
+    () => new Map(emplacements.map((e) => [e.id, e])),
+    [],
   );
+
+  const statsParEmplacement = useMemo(() => {
+    const map = new Map<string, { nbProduits: number; nbAlertes: number }>();
+
+    for (const emp of emplacementsDuSite) {
+      map.set(emp.id, { nbProduits: 0, nbAlertes: 0 });
+    }
+
+    for (const p of produits) {
+      for (const empId of p.emplacementIds) {
+        const current = map.get(empId);
+        if (!current) continue;
+        current.nbProduits += 1;
+        if (p.stockActuel <= p.seuilReassort) current.nbAlertes += 1;
+      }
+    }
+
+    return map;
+  }, [emplacementsDuSite]);
+
+  if (!siteActif) return null;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -152,27 +192,24 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* ─── Salles ──────────────────────────── */}
+      {/* ─── Emplacements ────────────────────── */}
       <div>
-        <h2 className="mb-3 text-lg font-semibold text-on-surface">Salles</h2>
+        <h2 className="mb-3 text-lg font-semibold text-on-surface">
+          Emplacements
+        </h2>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-          {pdvDuSite.map((pdv) => {
-            const nbProduits = produits.filter((p) =>
-              p.pointDeVenteIds.includes(pdv.id),
-            ).length;
-            const nbAlertes = produits.filter(
-              (p) =>
-                p.pointDeVenteIds.includes(pdv.id) &&
-                p.stockActuel <= p.seuilReassort,
-            ).length;
+          {emplacementsDuSite.map((emp) => {
+            const stats = statsParEmplacement.get(emp.id);
+            const nbProduits = stats?.nbProduits ?? 0;
+            const nbAlertes = stats?.nbAlertes ?? 0;
 
             return (
               <Link
-                key={pdv.id}
+                key={emp.id}
                 href="/reassort"
                 className="p-4 transition-all border rounded-xl bg-surface border-border hover:border-primary hover:shadow-md"
               >
-                <h4 className="font-medium text-on-surface">{pdv.nom}</h4>
+                <h4 className="font-medium text-on-surface">{emp.nom}</h4>
                 <div className="flex items-center gap-3 mt-2 text-xs text-muted">
                   <span>{nbProduits} produits</span>
 
@@ -204,8 +241,8 @@ export default function DashboardPage() {
         </div>
 
         <div className="space-y-3">
-          {historiqueScans.map((scan) => {
-            const pdv = pointsDeVente.find((p) => p.id === scan.pointDeVenteId);
+          {historiqueCaptures.map((scan) => {
+            const emp = emplacementParId.get(scan.emplacementId);
             return (
               <div
                 key={scan.id}
@@ -230,11 +267,11 @@ export default function DashboardPage() {
                     {scan.nomProduitValide}
                   </p>
                   <div className="flex items-center gap-2 text-xs text-muted mt-0.5">
-                    <span>{pdv?.nom}</span>
+                    <span>{emp?.nom}</span>
                     <span>•</span>
                     <span className="flex items-center gap-0.5">
                       <Clock className="w-3 h-3" />
-                      {new Date(scan.dateScan).toLocaleTimeString("fr-FR", {
+                      {new Date(scan.dateCapture).toLocaleTimeString("fr-FR", {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}

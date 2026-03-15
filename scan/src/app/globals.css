@@ -138,4 +138,21 @@
       opacity: 0;
     }
   }
+
+  /* Pulse doux pour l'appel à l'action caméra */
+  .animate-idle-pulse {
+    animation: idlePulse 2.2s ease-in-out infinite;
+  }
+
+  @keyframes idlePulse {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.04);
+      opacity: 0.92;
+    }
+  }
 }

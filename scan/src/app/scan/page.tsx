@@ -12,7 +12,7 @@
 
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   ScanLine,
   CheckCircle2,
@@ -27,18 +27,28 @@ import ValidationForm, {
   DonneesValidees,
 } from "@/components/scan/ValidationForm";
 import { DonneesOCR } from "@/types";
-import { historiqueScans, pointsDeVente } from "@/data/mockData";
+import { historiqueCaptures, emplacements } from "@/data/mockData";
+import { insertCapture } from "@/lib/db";
+import { useApp } from "@/contexts/AppContext";
 
 /* ─── Étapes du workflow de scan ─────────────────────────────────────── */
 type EtapeScan = "capture" | "validation" | "confirme";
+const ETAPES_SCAN = ["capture", "validation", "confirme"] as const;
 
 export default function ScanPage() {
+  const { utilisateur, authMode } = useApp();
   const [etape, setEtape] = useState<EtapeScan>("capture");
   const [donneesOCR, setDonneesOCR] = useState<DonneesOCR | null>(null);
   const [derniereValidation, setDerniereValidation] =
     useState<DonneesValidees | null>(null);
   /** Photos capturées — persistées entre les étapes pour le retour depuis validation */
   const [photosCapturees, setPhotosCapturees] = useState<string[]>([]);
+
+  const etapeIndex = useMemo(() => ETAPES_SCAN.indexOf(etape), [etape]);
+  const emplacementParId = useMemo(
+    () => new Map(emplacements.map((e) => [e.id, e])),
+    [],
+  );
 
   /**
    * Callback appelé par le CameraScanner quand l'OCR a
@@ -53,11 +63,40 @@ export default function ScanPage() {
    * Callback du formulaire de validation.
    * En production, on enverrait les données au serveur ici.
    */
-  const handleValidation = useCallback((donnees: DonneesValidees) => {
-    setDerniereValidation(donnees);
-    setEtape("confirme");
-    /* TODO (production) : POST vers l'API pour sauvegarder le scan */
-  }, []);
+  const handleValidation = useCallback(
+    async (donnees: DonneesValidees) => {
+      setDerniereValidation(donnees);
+      setEtape("confirme");
+
+      if (authMode !== "supabase") {
+        return;
+      }
+
+      try {
+        if (!utilisateur) {
+          throw new Error("Utilisateur non connecté");
+        }
+
+        await insertCapture(
+          {
+            nomProduitOCR: donneesOCR?.nomProduit ?? donnees.nomProduit,
+            nomProduitValide: donnees.nomProduit,
+            numeroLot: donnees.numeroLot,
+            dlc: donnees.dlc,
+            temperature: donnees.temperature ?? undefined,
+            conforme: donnees.conforme,
+            commentaire: donnees.commentaire,
+            emplacementId: donnees.emplacementId,
+            userId: utilisateur.id,
+          },
+          donnees.photoBase64,
+        );
+      } catch (err) {
+        console.warn("Erreur lors de l'enregistrement Supabase :", err);
+      }
+    },
+    [authMode, donneesOCR, utilisateur],
+  );
 
   /**
    * Retour vers la capture en conservant les photos existantes.
@@ -86,10 +125,13 @@ export default function ScanPage() {
         </h1>
         <p className="mt-1 text-sm text-muted">
           {etape === "capture" &&
-            "Scannez l'étiquette d'un produit pour extraire les information  ."}
+            "Scannez l'étiquette d'un produit pour extraire les informations."}
           {etape === "validation" &&
             "Vérifiez les données extraites et validez le contrôle."}
-          {etape === "confirme" && "Scan enregistré avec succès !"}
+          {etape === "confirme" &&
+            (authMode === "supabase"
+              ? "Scan enregistré avec succès !"
+              : "Scan validé en mode local.")}
         </p>
       </div>
 
@@ -100,9 +142,6 @@ export default function ScanPage() {
           { label: "Validation", step: "validation" as const },
           { label: "Terminé", step: "confirme" as const },
         ].map((item, index) => {
-          const etapeIndex = ["capture", "validation", "confirme"].indexOf(
-            etape,
-          );
           const itemIndex = index;
           const estActif = etapeIndex === itemIndex;
           const estFait = etapeIndex > itemIndex;
@@ -157,6 +196,7 @@ export default function ScanPage() {
           <div className="animate-slide-up">
             <ValidationForm
               donneesOCR={donneesOCR}
+              photoBase64={photosCapturees[0]}
               onValider={handleValidation}
               onAnnuler={retourVersCapture}
             />
@@ -176,6 +216,21 @@ export default function ScanPage() {
               Le contrôle HACCP pour{" "}
               <strong>{derniereValidation.nomProduit}</strong> a été sauvegardé.
             </p>
+
+            {/* Emplacement de la capture */}
+            {(() => {
+              const emp = emplacementParId.get(
+                derniereValidation.emplacementId,
+              );
+              return emp ? (
+                <div className="inline-flex items-center gap-2 mb-6 px-4 py-2 rounded-full bg-primary/10 border border-primary/20">
+                  <span className="text-sm text-muted">Emplacement :</span>
+                  <span className="text-sm font-semibold text-primary">
+                    {emp.nom}
+                  </span>
+                </div>
+              ) : null;
+            })()}
 
             {/* Résumé du scan */}
             <div className="max-w-sm p-4 mx-auto mb-6 space-y-2 text-left bg-surface-alt rounded-xl">
@@ -227,19 +282,19 @@ export default function ScanPage() {
           Historique récent
         </h3>
         <div className="space-y-2">
-          {historiqueScans.map((scan) => {
-            const pdv = pointsDeVente.find((p) => p.id === scan.pointDeVenteId);
+          {historiqueCaptures.map((capture) => {
+            const emp = emplacementParId.get(capture.emplacementId);
             return (
               <div
-                key={scan.id}
+                key={capture.id}
                 className="flex items-center gap-3 p-3 border rounded-xl bg-surface border-border"
               >
                 <div
                   className={`p-1.5 rounded-lg ${
-                    scan.conforme ? "bg-success/10" : "bg-danger/10"
+                    capture.conforme ? "bg-success/10" : "bg-danger/10"
                   }`}
                 >
-                  {scan.conforme ? (
+                  {capture.conforme ? (
                     <ShieldCheck className="w-4 h-4 text-success" />
                   ) : (
                     <ShieldX className="w-4 h-4 text-danger" />
@@ -247,15 +302,15 @@ export default function ScanPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate text-on-surface">
-                    {scan.nomProduitValide}
+                    {capture.nomProduitValide}
                   </p>
                   <p className="text-xs text-muted">
-                    {pdv?.nom} • <Clock className="inline w-3 h-3" />{" "}
-                    {new Date(scan.dateScan).toLocaleString("fr-FR")}
+                    {emp?.nom} • <Clock className="inline w-3 h-3" />{" "}
+                    {new Date(capture.dateCapture).toLocaleString("fr-FR")}
                   </p>
                 </div>
                 <span className="text-xs text-muted">
-                  Lot: {scan.numeroLot}
+                  Lot: {capture.numeroLot}
                 </span>
               </div>
             );

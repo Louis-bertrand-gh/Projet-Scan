@@ -1,0 +1,216 @@
+-- ═══════════════════════════════════════════════════════════════════════
+-- schema.sql — Schéma complet de la base de données Supabase
+--
+-- À exécuter dans l'éditeur SQL de votre projet Supabase.
+-- Crée toutes les tables, relations, index et politiques RLS.
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- ─── Extensions ──────────────────────────────────────────────────────────
+create extension if not exists "uuid-ossp";
+
+-- ─── Enum rôle utilisateur ────────────────────────────────────────────────
+create type user_role as enum ('admin', 'cc', 'cca', 'rp', 'equipier');
+
+-- ─── Table : sites ───────────────────────────────────────────────────────
+create table if not exists sites (
+  id            uuid primary key default uuid_generate_v4(),
+  nom           text not null,
+  localisation  text not null,
+  created_at    timestamptz not null default now()
+);
+
+-- ─── Table : emplacements ────────────────────────────────────────────────
+create table if not exists emplacements (
+  id         uuid primary key default uuid_generate_v4(),
+  nom        text not null,
+  site_id    uuid not null references sites(id) on delete cascade,
+  icone      text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_emplacements_site_id on emplacements(site_id);
+
+-- ─── Table : categories ───────────────────────────────────────────────────
+create table if not exists categories (
+  id          uuid primary key default uuid_generate_v4(),
+  nom         text not null,
+  description text,
+  icone       text not null,
+  created_at  timestamptz not null default now()
+);
+
+-- ─── Table de liaison : emplacement_categories ──────────────────────────
+create table if not exists emplacement_categories (
+  emplacement_id uuid not null references emplacements(id) on delete cascade,
+  categorie_id   uuid not null references categories(id) on delete cascade,
+  primary key (emplacement_id, categorie_id)
+);
+
+-- ─── Table : produits ─────────────────────────────────────────────────────
+create table if not exists produits (
+  id                       uuid primary key default uuid_generate_v4(),
+  nom                      text not null,
+  categorie_id             uuid not null references categories(id) on delete restrict,
+  unite                    text not null,
+  seuil_reassort           numeric(10, 3) not null default 0,
+  stock_actuel             numeric(10, 3) not null default 0,
+  code_barres              text,
+  temperature_conservation integer,
+  created_at               timestamptz not null default now()
+);
+
+create index if not exists idx_produits_categorie_id on produits(categorie_id);
+create index if not exists idx_produits_code_barres  on produits(code_barres) where code_barres is not null;
+
+-- ─── Table de liaison : emplacement_produits ────────────────────────────
+create table if not exists emplacement_produits (
+  emplacement_id uuid not null references emplacements(id) on delete cascade,
+  produit_id     uuid not null references produits(id) on delete cascade,
+  primary key (emplacement_id, produit_id)
+);
+
+-- ─── Table : utilisateurs ─────────────────────────────────────────────────
+-- Liée à auth.users de Supabase via l'id (même UUID).
+create table if not exists utilisateurs (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  nom        text not null,
+  prenom     text not null,
+  email      text not null unique,
+  role       user_role not null default 'equipier',
+  avatar     text,
+  created_at timestamptz not null default now()
+);
+
+-- ─── Table de liaison : utilisateur_sites ────────────────────────────────
+create table if not exists utilisateur_sites (
+  utilisateur_id uuid not null references utilisateurs(id) on delete cascade,
+  site_id        uuid not null references sites(id) on delete cascade,
+  primary key (utilisateur_id, site_id)
+);
+
+create index if not exists idx_utilisateur_sites_user on utilisateur_sites(utilisateur_id);
+
+-- ─── Table : captures ────────────────────────────────────────────────────
+create table if not exists captures (
+  id                  uuid primary key default uuid_generate_v4(),
+  produit_id          uuid references produits(id) on delete restrict,
+  emplacement_id      uuid not null references emplacements(id) on delete restrict,
+  user_id             uuid not null references utilisateurs(id) on delete restrict,
+  date_capture        timestamptz not null default now(),
+  numero_lot          text not null,
+  dlc                 date not null,
+  nom_produit_ocr     text not null,
+  nom_produit_valide  text not null,
+  temperature         numeric(5, 2),
+  conforme            boolean not null default true,
+  commentaire         text,
+  photo_url           text,
+  created_at          timestamptz not null default now()
+);
+
+create index if not exists idx_captures_emplacement_id on captures(emplacement_id);
+create index if not exists idx_captures_user_id        on captures(user_id);
+create index if not exists idx_captures_date           on captures(date_capture desc);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ROW LEVEL SECURITY (RLS)
+-- ═══════════════════════════════════════════════════════════════════════
+
+alter table sites              enable row level security;
+alter table emplacements           enable row level security;
+alter table categories             enable row level security;
+alter table emplacement_categories enable row level security;
+alter table produits               enable row level security;
+alter table emplacement_produits   enable row level security;
+alter table utilisateurs           enable row level security;
+alter table utilisateur_sites      enable row level security;
+alter table captures               enable row level security;
+
+-- ── Politiques de lecture (SELECT) pour les utilisateurs authentifiés ─────
+
+-- Sites : un user voit uniquement ses sites
+create policy "Voir ses sites" on sites
+  for select using (
+    id in (
+      select site_id from utilisateur_sites
+      where utilisateur_id = auth.uid()
+    )
+  );
+
+-- Emplacements : accessible si le site parent l'est
+create policy "Voir les emplacements de ses sites" on emplacements
+  for select using (
+    site_id in (
+      select site_id from utilisateur_sites
+      where utilisateur_id = auth.uid()
+    )
+  );
+
+-- Catégories & produits : lecture libre pour tous les authentifiés
+create policy "Lecture catégories" on categories
+  for select using (auth.role() = 'authenticated');
+
+create policy "Lecture produits" on produits
+  for select using (auth.role() = 'authenticated');
+
+create policy "Lecture emplacement_categories" on emplacement_categories
+  for select using (auth.role() = 'authenticated');
+
+create policy "Lecture emplacement_produits" on emplacement_produits
+  for select using (auth.role() = 'authenticated');
+
+-- Utilisateurs : chacun voit son propre profil
+create policy "Voir son profil" on utilisateurs
+  for select using (id = auth.uid());
+
+create policy "Modifier son profil" on utilisateurs
+  for update using (id = auth.uid());
+
+-- utilisateur_sites : voir ses propres associations
+create policy "Voir ses associations sites" on utilisateur_sites
+  for select using (utilisateur_id = auth.uid());
+
+-- Captures HACCP : lecture et insertion pour les membres des emplacements concernés
+create policy "Voir les captures de ses emplacements" on captures
+  for select using (
+    emplacement_id in (
+      select emp.id from emplacements emp
+      inner join utilisateur_sites us on us.site_id = emp.site_id
+      where us.utilisateur_id = auth.uid()
+    )
+  );
+
+create policy "Insérer une capture" on captures
+  for insert with check (
+    auth.uid() = user_id
+    and emplacement_id in (
+      select emp.id from emplacements emp
+      inner join utilisateur_sites us on us.site_id = emp.site_id
+      where us.utilisateur_id = auth.uid()
+    )
+  );
+
+create policy "Mettre à jour ses captures" on captures
+  for update using (auth.uid() = user_id);
+
+-- ── Politique admin : accès total ─────────────────────────────────────────
+create policy "Admin accès total sites" on sites
+  for all using (
+    exists (select 1 from utilisateurs where id = auth.uid() and role = 'admin')
+  );
+
+create policy "Admin accès total emplacements" on emplacements
+  for all using (
+    exists (select 1 from utilisateurs where id = auth.uid() and role = 'admin')
+  );
+
+create policy "Admin accès total captures" on captures
+  for all using (
+    exists (select 1 from utilisateurs where id = auth.uid() and role = 'admin')
+  );
+
+create policy "Admin gestion utilisateurs" on utilisateurs
+  for all using (
+    exists (select 1 from utilisateurs where id = auth.uid() and role = 'admin')
+  );
+

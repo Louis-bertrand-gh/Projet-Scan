@@ -8,7 +8,8 @@
  * - Les champs sont pré-remplis avec les données OCR
  * - Un indicateur de confiance aide l'utilisateur à repérer
  *   les champs qui nécessitent une vérification
- * - Le formulaire s'adapte au contexte (PDV, température, etc.)
+ * - L'emplacement sélectionné est affiché en permanence pour éviter
+ *   toute erreur de saisie de lieu
  * ═══════════════════════════════════════════════════════════════════════ */
 
 "use client";
@@ -25,6 +26,7 @@ import {
   ShieldCheck,
   ShieldX,
   Save,
+  MapPin,
 } from "lucide-react";
 import { DonneesOCR } from "@/types";
 import { useApp } from "@/contexts/AppContext";
@@ -33,6 +35,8 @@ import { useApp } from "@/contexts/AppContext";
 interface ValidationFormProps {
   /** Données extraites par l'OCR */
   donneesOCR: DonneesOCR;
+  /** Photo capturée (base64) à uploader avec la capture */
+  photoBase64?: string;
   /** Callback de soumission du formulaire validé */
   onValider: (donnees: DonneesValidees) => void;
   /** Callback d'annulation */
@@ -47,7 +51,8 @@ export interface DonneesValidees {
   temperature: number | null;
   conforme: boolean;
   commentaire: string;
-  pointDeVenteId: string;
+  emplacementId: string;
+  photoBase64?: string;
 }
 
 /* ─── Composant indicateur de confiance OCR ──────────────────────────── */
@@ -74,10 +79,23 @@ function IndicateurConfiance({ confiance }: { confiance: number }) {
 
 export default function ValidationForm({
   donneesOCR,
+  photoBase64,
   onValider,
   onAnnuler,
 }: ValidationFormProps) {
-  const { pdvDuSite, pdvActif } = useApp();
+  const { emplacementsDuSite, emplacementActif } = useApp();
+  const seuilConfianceChamp = 0.75;
+
+  const confianceNomProduit =
+    donneesOCR.confianceChamps?.nomProduit ?? donneesOCR.confiance;
+  const confianceNumeroLot =
+    donneesOCR.confianceChamps?.numeroLot ?? donneesOCR.confiance;
+  const confianceDlc = donneesOCR.confianceChamps?.dlc ?? donneesOCR.confiance;
+
+  const classesChamp = (confiance: number) =>
+    confiance < seuilConfianceChamp
+      ? "w-full px-3 py-2.5 rounded-xl bg-warning/10 border border-warning text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-warning/30 focus:border-warning transition-colors"
+      : "w-full px-3 py-2.5 rounded-xl bg-surface border border-border text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors";
 
   /* ─── État du formulaire ─────────────────────────────────────── */
   const [numeroLot, setNumeroLot] = useState(donneesOCR.numeroLot);
@@ -86,7 +104,14 @@ export default function ValidationForm({
   const [temperature, setTemperature] = useState<string>("");
   const [conforme, setConforme] = useState(true);
   const [commentaire, setCommentaire] = useState("");
-  const [pdvId, setPdvId] = useState(pdvActif?.id || "");
+  const [emplacementId, setEmplacementId] = useState(
+    emplacementActif?.id ?? "",
+  );
+  /* Emplacement sélectionné (pour l'affichage du nom) */
+  const emplacementSelectionne = emplacementsDuSite.find(
+    (e) => e.id === emplacementId,
+  );
+
   const [enregistrement, setEnregistrement] = useState(false);
 
   /* Mise à jour si les données OCR changent */
@@ -98,26 +123,26 @@ export default function ValidationForm({
 
   /**
    * Soumission du formulaire.
-   * Simule un délai d'enregistrement pour le feedback visuel.
+   * Déclenche la validation sans délai artificiel.
    */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setEnregistrement(true);
 
-    /* Simulation d'enregistrement (500ms) */
-    await new Promise((res) => setTimeout(res, 500));
-
-    onValider({
-      numeroLot,
-      dlc,
-      nomProduit,
-      temperature: temperature ? parseFloat(temperature) : null,
-      conforme,
-      commentaire,
-      pointDeVenteId: pdvId,
-    });
-
-    setEnregistrement(false);
+    try {
+      onValider({
+        numeroLot,
+        dlc,
+        nomProduit,
+        temperature: temperature ? parseFloat(temperature) : null,
+        conforme,
+        commentaire,
+        emplacementId,
+        photoBase64,
+      });
+    } finally {
+      setEnregistrement(false);
+    }
   };
 
   return (
@@ -133,25 +158,43 @@ export default function ValidationForm({
         <IndicateurConfiance confiance={donneesOCR.confiance} />
       </div>
 
-      {/* ─── Sélection du Point de Vente ──────────────────────── */}
+      {/* ─── Sélection de l'emplacement ────────────────────────── */}
       <div>
         <label className="flex items-center gap-2 text-sm font-medium text-on-surface mb-1.5">
-          <Tag className="w-4 h-4 text-primary" />
-          Point de Vente
+          <MapPin className="w-4 h-4 text-primary" />
+          Emplacement de stockage
         </label>
         <select
-          value={pdvId}
-          onChange={(e) => setPdvId(e.target.value)}
+          value={emplacementId}
+          onChange={(e) => setEmplacementId(e.target.value)}
           required
           className="w-full px-3 py-2.5 rounded-xl bg-surface border border-border text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
         >
-          <option value="">Sélectionner un PDV</option>
-          {pdvDuSite.map((pdv) => (
-            <option key={pdv.id} value={pdv.id}>
-              {pdv.nom}
+          <option value="">Sélectionner un emplacement</option>
+          {emplacementsDuSite.map((emp) => (
+            <option key={emp.id} value={emp.id}>
+              {emp.nom}
             </option>
           ))}
         </select>
+
+        {/* ─── Bannière de confirmation de l'emplacement ──────── */}
+        {emplacementSelectionne ? (
+          <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
+            <MapPin className="w-4 h-4 text-primary shrink-0" />
+            <span className="text-sm font-semibold text-primary">
+              {emplacementSelectionne.nom}
+            </span>
+            <CheckCircle2 className="w-4 h-4 text-primary ml-auto shrink-0" />
+          </div>
+        ) : (
+          <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/20">
+            <AlertTriangle className="w-4 h-4 text-warning shrink-0" />
+            <span className="text-xs text-warning">
+              Choisissez l&apos;emplacement avant de valider
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ─── Nom du produit ───────────────────────────────────── */}
@@ -159,13 +202,18 @@ export default function ValidationForm({
         <label className="flex items-center gap-2 text-sm font-medium text-on-surface mb-1.5">
           <Tag className="w-4 h-4 text-primary" />
           Nom du produit
+          {confianceNomProduit < seuilConfianceChamp && (
+            <span className="text-xs text-warning font-semibold">
+              A verifier
+            </span>
+          )}
         </label>
         <input
           type="text"
           value={nomProduit}
           onChange={(e) => setNomProduit(e.target.value)}
           required
-          className="w-full px-3 py-2.5 rounded-xl bg-surface border border-border text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+          className={classesChamp(confianceNomProduit)}
           placeholder="Nom du produit"
         />
       </div>
@@ -175,13 +223,18 @@ export default function ValidationForm({
         <label className="flex items-center gap-2 text-sm font-medium text-on-surface mb-1.5">
           <Hash className="w-4 h-4 text-primary" />
           Numéro de lot
+          {confianceNumeroLot < seuilConfianceChamp && (
+            <span className="text-xs text-warning font-semibold">
+              A verifier
+            </span>
+          )}
         </label>
         <input
           type="text"
           value={numeroLot}
           onChange={(e) => setNumeroLot(e.target.value)}
           required
-          className="w-full px-3 py-2.5 rounded-xl bg-surface border border-border text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+          className={classesChamp(confianceNumeroLot)}
           placeholder="LOT-XXXX-XXXX-X"
         />
       </div>
@@ -191,13 +244,18 @@ export default function ValidationForm({
         <label className="flex items-center gap-2 text-sm font-medium text-on-surface mb-1.5">
           <Calendar className="w-4 h-4 text-primary" />
           DLC (Date Limite de Consommation)
+          {confianceDlc < seuilConfianceChamp && (
+            <span className="text-xs text-warning font-semibold">
+              A verifier
+            </span>
+          )}
         </label>
         <input
           type="date"
           value={dlc}
           onChange={(e) => setDlc(e.target.value)}
           required
-          className="w-full px-3 py-2.5 rounded-xl bg-surface border border-border text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+          className={classesChamp(confianceDlc)}
         />
       </div>
 
@@ -271,7 +329,7 @@ export default function ValidationForm({
       <div className="flex gap-3 pt-2">
         <button
           type="submit"
-          disabled={enregistrement || !pdvId}
+          disabled={enregistrement || !emplacementId}
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-primary text-on-primary rounded-xl font-medium shadow-lg hover:bg-primary-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
         >
           {enregistrement ? (

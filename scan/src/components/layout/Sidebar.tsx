@@ -2,7 +2,7 @@
  * Sidebar.tsx — Barre latérale de navigation (version Desktop)
  *
  * Affichée uniquement sur les écrans larges (≥ 1024px).
- * Destinée aux rôles Admin et Chef de Cuisine qui travaillent
+ * Destinée aux rôles Admin et Chef de camp qui travaillent
  * principalement depuis un poste fixe.
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/contexts/AppContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { getRoleLabel } from "@/utils/roles";
 
 /* ─── Éléments de navigation ─────────────────────────────────────────── */
 const navItems = [
@@ -34,9 +35,12 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { utilisateur, siteActif, sitesAccessibles, changerSite } = useApp();
+  const { utilisateur, siteActif, sitesAccessibles, changerSite, deconnecter } =
+    useApp();
   const { themeActif } = useTheme();
   const [siteMenuOuvert, setSiteMenuOuvert] = React.useState(false);
+
+  if (!siteActif || !utilisateur) return null;
 
   return (
     <aside className="hidden lg:flex flex-col w-64 bg-surface border-r border-border h-screen fixed left-0 top-0 z-40">
@@ -147,9 +151,14 @@ export default function Sidebar() {
             <p className="text-sm font-medium text-on-surface truncate">
               {utilisateur.prenom} {utilisateur.nom}
             </p>
-            <p className="text-xs text-muted capitalize">{utilisateur.role}</p>
+            <p className="text-xs text-muted">
+              {getRoleLabel(utilisateur.role)}
+            </p>
           </div>
           <button
+            onClick={() => {
+              void deconnecter();
+            }}
             className="p-1.5 rounded-lg hover:bg-surface-alt text-muted hover:text-danger transition-colors"
             title="Déconnexion"
           >
