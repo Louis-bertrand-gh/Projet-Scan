@@ -11,18 +11,33 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ScanLine, Package, Settings } from "lucide-react";
-
-/* ─── Éléments de navigation mobile ──────────────────────────────────── */
-const navItems = [
-  { label: "Accueil", href: "/", icone: LayoutDashboard },
-  { label: "Scanner", href: "/scan", icone: ScanLine },
-  { label: "Réassort", href: "/reassort", icone: Package },
-  { label: "Réglages", href: "/parametres", icone: Settings },
-];
+import {
+  LayoutDashboard,
+  ScanLine,
+  Package,
+  Settings,
+  Users,
+  Activity,
+} from "lucide-react";
+import { useApp } from "@/contexts/AppContext";
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const { utilisateur } = useApp();
+  const estAdmin = utilisateur?.role === "admin";
+
+  const navItems = [
+    { label: "Accueil", href: "/", icone: LayoutDashboard },
+    { label: "Scanner", href: "/scan", icone: ScanLine },
+    { label: "Réassort", href: "/reassort", icone: Package },
+    ...(estAdmin
+      ? [
+          { label: "Utilisateurs", href: "/admin/users", icone: Users },
+          { label: "Logs", href: "/admin/logs", icone: Activity },
+        ]
+      : []),
+    { label: "Réglages", href: "/parametres", icone: Settings },
+  ];
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-border safe-area-bottom">

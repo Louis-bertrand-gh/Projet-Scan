@@ -16,6 +16,8 @@ import {
   ScanLine,
   Package,
   Settings,
+  Users,
+  Activity,
   MapPin,
   ChevronDown,
   User,
@@ -25,14 +27,6 @@ import { useApp } from "@/contexts/AppContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getRoleLabel } from "@/utils/roles";
 
-/* ─── Éléments de navigation ─────────────────────────────────────────── */
-const navItems = [
-  { label: "Tableau de bord", href: "/", icone: LayoutDashboard },
-  { label: "Scanner", href: "/scan", icone: ScanLine },
-  { label: "Réassort", href: "/reassort", icone: Package },
-  { label: "Paramètres", href: "/parametres", icone: Settings },
-];
-
 export default function Sidebar() {
   const pathname = usePathname();
   const { utilisateur, siteActif, sitesAccessibles, changerSite, deconnecter } =
@@ -41,6 +35,24 @@ export default function Sidebar() {
   const [siteMenuOuvert, setSiteMenuOuvert] = React.useState(false);
 
   if (!siteActif || !utilisateur) return null;
+
+  const estAdmin = utilisateur.role === "admin";
+  const navItems = [
+    { label: "Tableau de bord", href: "/", icone: LayoutDashboard },
+    { label: "Scanner", href: "/scan", icone: ScanLine },
+    { label: "Réassort", href: "/reassort", icone: Package },
+    ...(estAdmin
+      ? [
+          {
+            label: "Gestion Utilisateurs",
+            href: "/admin/users",
+            icone: Users,
+          },
+          { label: "Logs Système", href: "/admin/logs", icone: Activity },
+        ]
+      : []),
+    { label: "Paramètres", href: "/parametres", icone: Settings },
+  ];
 
   return (
     <aside className="hidden lg:flex flex-col w-64 bg-surface border-r border-border h-screen fixed left-0 top-0 z-40">

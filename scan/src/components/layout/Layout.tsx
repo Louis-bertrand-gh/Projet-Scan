@@ -28,6 +28,10 @@ export default function Layout({ children }: LayoutProps) {
   const router = useRouter();
   const { chargement, erreur, utilisateur } = useApp();
   const estRouteAuth = pathname.startsWith("/auth");
+  const estRouteAdmin = pathname.startsWith("/admin");
+  const estRouteInscription =
+    pathname === "/auth/inscription" ||
+    pathname.startsWith("/auth/inscription?");
   const estRouteConfirmationInscription = pathname.startsWith(
     "/auth/inscription/confirmation",
   );
@@ -35,17 +39,37 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     if (chargement) return;
 
+    if (!utilisateur && estRouteInscription) {
+      router.replace("/auth");
+      return;
+    }
+
     if (!utilisateur && !estRouteAuth) {
       router.replace("/auth");
       return;
     }
 
-    if (utilisateur && estRouteAuth && !estRouteConfirmationInscription) {
+    if (utilisateur && estRouteAdmin && utilisateur.role !== "admin") {
+      router.replace("/");
+      return;
+    }
+
+    const adminPeutCreerCompte =
+      utilisateur?.role === "admin" && estRouteInscription;
+
+    if (
+      utilisateur &&
+      estRouteAuth &&
+      !estRouteConfirmationInscription &&
+      !adminPeutCreerCompte
+    ) {
       router.replace("/");
     }
   }, [
     chargement,
+    estRouteAdmin,
     estRouteAuth,
+    estRouteInscription,
     estRouteConfirmationInscription,
     router,
     utilisateur,
@@ -67,7 +91,14 @@ export default function Layout({ children }: LayoutProps) {
 
   /* ─── Page d'authentification sans chrome applicatif ───────── */
   if (estRouteAuth) {
-    if (utilisateur && !estRouteConfirmationInscription) {
+    const adminPeutCreerCompte =
+      utilisateur?.role === "admin" && estRouteInscription;
+
+    if (
+      utilisateur &&
+      !estRouteConfirmationInscription &&
+      !adminPeutCreerCompte
+    ) {
       return (
         <div className="min-h-screen bg-background flex items-center justify-center">
           <div className="flex flex-col items-center gap-3 text-muted">
@@ -92,6 +123,19 @@ export default function Layout({ children }: LayoutProps) {
             <ScanLine className="w-7 h-7 text-on-primary" />
           </div>
           <p className="text-sm">Redirection vers la connexion…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (estRouteAdmin && utilisateur.role !== "admin") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="text-center space-y-2">
+          <p className="text-danger font-medium">Accès non autorisé</p>
+          <p className="text-muted text-sm">
+            Cette section est réservée aux administrateurs.
+          </p>
         </div>
       </div>
     );

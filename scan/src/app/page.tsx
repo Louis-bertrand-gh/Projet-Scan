@@ -21,12 +21,19 @@ import {
   ShieldCheck,
   ShieldX,
   Thermometer,
+  UserCog,
+  LogOut,
 } from "lucide-react";
 import { useApp } from "@/contexts/AppContext";
 import { produits, historiqueCaptures, emplacements } from "@/data/mockData";
 
+const ROLES_VALIDES = ["admin", "cc", "cca", "rp", "equipier"] as const;
+
 export default function DashboardPage() {
-  const { siteActif, emplacementsDuSite } = useApp();
+  const { siteActif, emplacementsDuSite, utilisateur, deconnecter } = useApp();
+  const roleDefini = utilisateur
+    ? ROLES_VALIDES.includes(utilisateur.role)
+    : false;
 
   /* ─── Calcul des KPI du site ───────────────────────────────── */
   const emplacementIdsDuSite = useMemo(
@@ -87,7 +94,71 @@ export default function DashboardPage() {
     return map;
   }, [emplacementsDuSite]);
 
-  if (!siteActif) return null;
+  if (utilisateur && !roleDefini) {
+    return (
+      <div className="max-w-2xl p-6 border rounded-2xl border-border bg-surface">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-warning/10">
+            <UserCog className="w-5 h-5 text-warning" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-on-surface">
+              Compte en attente d&apos;attribution
+            </h1>
+            <p className="mt-2 text-sm text-muted">
+              Votre compte est bien créé, mais aucun rôle n&apos;est encore
+              attribué.
+            </p>
+            <p className="mt-2 text-sm text-on-surface">
+              Contactez un administrateur pour finaliser vos droits
+              d&apos;accès.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                void deconnecter();
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 mt-4 text-sm font-medium transition-colors border rounded-xl border-border text-on-surface hover:bg-surface-alt"
+            >
+              <LogOut className="w-4 h-4" />
+              Se déconnecter
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!siteActif) {
+    return (
+      <div className="max-w-2xl p-6 border rounded-2xl border-border bg-surface">
+        <h1 className="text-2xl font-bold text-on-surface">Tableau de bord</h1>
+        <p className="mt-2 text-sm text-muted">
+          Aucun site n&apos;est encore associé à votre compte.
+        </p>
+        {utilisateur?.role === "admin" ? (
+          <p className="mt-3 text-sm text-on-surface">
+            En tant qu&apos;administrateur, ajoutez des associations
+            utilisateur/site depuis la gestion des utilisateurs.
+          </p>
+        ) : (
+          <p className="mt-3 text-sm text-on-surface">
+            Contactez un administrateur pour vous attribuer un site.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            void deconnecter();
+          }}
+          className="inline-flex items-center gap-2 px-4 py-2.5 mt-4 text-sm font-medium transition-colors border rounded-xl border-border text-on-surface hover:bg-surface-alt"
+        >
+          <LogOut className="w-4 h-4" />
+          Se déconnecter
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">

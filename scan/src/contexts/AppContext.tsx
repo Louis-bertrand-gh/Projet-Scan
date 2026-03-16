@@ -68,7 +68,15 @@ interface AppContextType {
   /** Authentification temporaire par PIN admin */
   authentifierAvecPin: (pin: string) => Promise<boolean>;
   /** Authentification BDD (Supabase Auth) */
-  authentifierAvecBdd: (email: string, password: string) => Promise<boolean>;
+  authentifierAvecBdd: (
+    email: string,
+    password: string,
+  ) => Promise<{
+    ok: boolean;
+    messageErreur?: string;
+    needsEmailConfirmation?: boolean;
+    email?: string;
+  }>;
   /** Création de compte BDD (Supabase Auth + profil app) */
   creerCompteBdd: (payload: {
     prenom: string;
@@ -80,6 +88,8 @@ interface AppContextType {
     requiresEmailConfirmation: boolean;
     confirmationEmailRequested: boolean;
     email: string;
+    emailDejaUtilise: boolean;
+    messageErreur?: string;
   }>;
   /** Redemande l'envoi de l'email de confirmation */
   renvoyerEmailConfirmation: (email: string) => Promise<boolean>;
@@ -122,7 +132,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAuthMode("supabase");
 
     const tousLesSites = await fetchSites();
-    const sitesUser = tousLesSites.filter((s) => profil.siteIds.includes(s.id));
+    const sitesUser =
+      profil.role === "admin"
+        ? tousLesSites
+        : tousLesSites.filter((s) => profil.siteIds.includes(s.id));
     setSitesAccessibles(sitesUser);
 
     if (sitesUser.length === 0) {
@@ -257,16 +270,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const authentifierAvecBdd = useCallback(
     async (email: string, password: string) => {
+      const emailNormalise = email.trim().toLowerCase();
+
       try {
         setChargement(true);
         setErreur(null);
 
-        const { user } = await signIn(email, password);
+        const { user } = await signIn(emailNormalise, password);
         await hydraterSessionSupabase(user);
-        return true;
+        return { ok: true };
       } catch (e) {
-        setErreur(e instanceof Error ? e.message : "Erreur de connexion BDD");
-        return false;
+        const messageErreur =
+          e instanceof Error ? e.message : "Erreur de connexion BDD";
+
+        const needsEmailConfirmation =
+          /pas encore ete confirmee/i.test(messageErreur) ||
+          /email not confirmed/i.test(messageErreur) ||
+          /email.*confirm/i.test(messageErreur);
+
+        setErreur(messageErreur);
+        return {
+          ok: false,
+          messageErreur,
+          needsEmailConfirmation,
+          email: emailNormalise,
+        };
       } finally {
         setChargement(false);
       }
@@ -287,7 +315,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         const result = await signUpWithProfile(payload);
 
-        if (!result.requiresEmailConfirmation) {
+        if (result.emailDejaUtilise) {
+          return {
+            ok: false,
+            requiresEmailConfirmation: false,
+            confirmationEmailRequested: false,
+            email: result.email,
+            emailDejaUtilise: true,
+            messageErreur: result.messageErreur,
+          };
+        }
+
+        if (!result.requiresEmailConfirmation && result.user) {
           await hydraterSessionSupabase(result.user);
         }
 
@@ -296,16 +335,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           requiresEmailConfirmation: result.requiresEmailConfirmation,
           confirmationEmailRequested: result.confirmationEmailRequested,
           email: result.email,
+          emailDejaUtilise: false,
+          messageErreur: result.messageErreur,
         };
       } catch (e) {
-        setErreur(
-          e instanceof Error ? e.message : "Erreur de création de compte",
-        );
+        const messageErreur =
+          e instanceof Error ? e.message : "Erreur de création de compte";
+
+        setErreur(messageErreur);
         return {
           ok: false,
           requiresEmailConfirmation: false,
           confirmationEmailRequested: false,
           email: payload.email,
+          emailDejaUtilise: false,
+          messageErreur,
         };
       } finally {
         setChargement(false);

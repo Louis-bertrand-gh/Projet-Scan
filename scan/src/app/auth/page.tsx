@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   LockKeyhole,
   ShieldCheck,
@@ -15,14 +15,30 @@ import { useApp } from "@/contexts/AppContext";
 
 export default function AuthPage() {
   const router = useRouter();
-  const { authentifierAvecPin, authentifierAvecBdd } = useApp();
+  const searchParams = useSearchParams();
+  const {
+    authentifierAvecPin,
+    authentifierAvecBdd,
+    erreur: erreurContexte,
+  } = useApp();
+  const emailDepuisLien = searchParams.get("email")?.trim().toLowerCase() ?? "";
+  const from = searchParams.get("from") ?? "";
+
   const [pin, setPin] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(emailDepuisLien);
   const [motDePasse, setMotDePasse] = useState("");
   const [erreurPin, setErreurPin] = useState<string | null>(null);
   const [erreurBdd, setErreurBdd] = useState<string | null>(null);
+  const [lienConfirmationVisible, setLienConfirmationVisible] = useState(false);
   const [soumissionPin, setSoumissionPin] = useState(false);
   const [soumissionBdd, setSoumissionBdd] = useState(false);
+  const [tentativesBdd, setTentativesBdd] = useState(0);
+  const erreurBddAffichee =
+    erreurBdd ?? (!soumissionBdd && erreurContexte ? erreurContexte : null);
+  const messageInfoInitial =
+    from === "confirmation"
+      ? "Vous pouvez maintenant vous connecter avec votre email et mot de passe."
+      : "";
 
   async function handleSubmitPin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,19 +61,43 @@ export default function AuthPage() {
 
   async function handleSubmitBdd(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSoumissionBdd(true);
     setErreurBdd(null);
+    setLienConfirmationVisible(false);
+
+    const emailNettoye = email.trim().toLowerCase();
+
+    if (!emailNettoye) {
+      setErreurBdd("Veuillez saisir votre adresse email.");
+      return;
+    }
+
+    const formatEmailValide = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNettoye);
+    if (!formatEmailValide) {
+      setErreurBdd("Le format de l'email est invalide.");
+      return;
+    }
+
+    if (!motDePasse) {
+      setErreurBdd("Veuillez saisir votre mot de passe.");
+      return;
+    }
+
+    setSoumissionBdd(true);
 
     try {
-      const succes = await authentifierAvecBdd(email.trim(), motDePasse);
-      if (!succes) {
-        setErreurBdd(
-          "Identifiants invalides ou profil utilisateur introuvable.",
-        );
+      const result = await authentifierAvecBdd(emailNettoye, motDePasse);
+      if (!result.ok) {
+        setTentativesBdd((n) => n + 1);
+        setErreurBdd(result.messageErreur ?? "Identifiants invalides.");
+        setLienConfirmationVisible(Boolean(result.needsEmailConfirmation));
         return;
       }
 
+      setTentativesBdd(0);
       router.replace("/");
+    } catch {
+      setTentativesBdd((n) => n + 1);
+      setErreurBdd("Erreur de connexion. Veuillez reessayer.");
     } finally {
       setSoumissionBdd(false);
     }
@@ -83,7 +123,7 @@ export default function AuthPage() {
                     Accès sécurisé
                   </p>
                   <h1 className="text-lg font-bold text-on-surface">
-                    Administration Scan HACCP
+                    Administration Scan
                   </h1>
                 </div>
               </div>
@@ -157,15 +197,21 @@ export default function AuthPage() {
                     className="flex items-center gap-2 mb-2 text-sm font-medium text-on-surface"
                   >
                     <Mail className="w-4 h-4 text-primary" />
-                    Email professionnel
+                    Email
                   </label>
                   <input
                     id="email"
                     type="email"
                     autoComplete="email"
                     value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="prenom.nom@huttopia.com"
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                      if (erreurBdd) setErreurBdd(null);
+                      if (lienConfirmationVisible) {
+                        setLienConfirmationVisible(false);
+                      }
+                    }}
+                    placeholder="prenom.nom@gmail.com"
                     className="w-full px-4 py-3 transition-colors border rounded-2xl border-border bg-surface-alt text-on-surface focus:border-primary focus:ring-2 focus:ring-primary/20"
                     required
                   />
@@ -184,16 +230,48 @@ export default function AuthPage() {
                     type="password"
                     autoComplete="current-password"
                     value={motDePasse}
-                    onChange={(event) => setMotDePasse(event.target.value)}
+                    onChange={(event) => {
+                      setMotDePasse(event.target.value);
+                      if (erreurBdd) setErreurBdd(null);
+                      if (lienConfirmationVisible) {
+                        setLienConfirmationVisible(false);
+                      }
+                    }}
                     placeholder="Votre mot de passe"
                     className="w-full px-4 py-3 transition-colors border rounded-2xl border-border bg-surface-alt text-on-surface focus:border-primary focus:ring-2 focus:ring-primary/20"
                     required
                   />
                 </div>
 
-                {erreurBdd && (
+                {erreurBddAffichee && (
                   <div className="px-4 py-3 text-sm border rounded-2xl border-danger/20 bg-danger/10 text-danger">
-                    {erreurBdd}
+                    {erreurBddAffichee}
+
+                    {lienConfirmationVisible && (email || emailDepuisLien) && (
+                      <div className="mt-2">
+                        <Link
+                          href={`/auth/inscription/confirmation?email=${encodeURIComponent(
+                            (email || emailDepuisLien).trim().toLowerCase(),
+                          )}&requires=1&requested=0`}
+                          className="font-semibold underline"
+                        >
+                          Renvoyer l&apos;email de confirmation
+                        </Link>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {messageInfoInitial && !erreurBdd && (
+                  <div className="px-4 py-3 text-sm border rounded-2xl border-primary/20 bg-primary/5 text-on-surface">
+                    {messageInfoInitial}
+                  </div>
+                )}
+
+                {tentativesBdd >= 3 && (
+                  <div className="px-4 py-3 text-sm border rounded-2xl border-primary/20 bg-primary/5 text-on-surface">
+                    Vous avez eu {tentativesBdd} tentatives sans succès.
+                    Vérifiez vos identifiants ou contactez un administrateur.
                   </div>
                 )}
 
@@ -202,15 +280,8 @@ export default function AuthPage() {
                   disabled={soumissionBdd || !email || !motDePasse}
                   className="flex items-center justify-center w-full gap-2 px-4 py-3 text-sm font-semibold transition-all shadow-lg rounded-2xl bg-primary text-on-primary shadow-primary/20 hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {soumissionBdd ? "Connexion..." : "Se connecter à la BDD"}
+                  {soumissionBdd ? "Connexion..." : "se connecter"}
                 </button>
-
-                <Link
-                  href="/auth/inscription"
-                  className="flex items-center justify-center w-full gap-2 px-4 py-3 text-sm font-medium transition-colors border rounded-2xl border-border text-on-surface hover:bg-surface-alt"
-                >
-                  Créer un compte lié à la BDD
-                </Link>
               </form>
 
               <div className="flex items-center gap-3 my-5">

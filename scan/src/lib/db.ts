@@ -14,6 +14,7 @@ import type {
   Produit,
   User,
   CaptureHACCP,
+  UserRole,
 } from "@/types";
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -94,19 +95,36 @@ function mapUser(row: {
   nom: string;
   prenom: string;
   email: string;
-  role: "admin" | "cc" | "cca" | "rp" | "equipier";
+  role: string;
   avatar: string | null;
   utilisateur_sites?: { site_id: string }[];
 }): User {
+  const roleNormalise = normalizeUserRole(row.role);
+
   return {
     id: row.id,
     nom: row.nom,
     prenom: row.prenom,
     email: row.email,
-    role: row.role,
+    role: roleNormalise,
     siteIds: row.utilisateur_sites?.map((us) => us.site_id) ?? [],
     avatar: row.avatar ?? undefined,
   };
+}
+
+function normalizeUserRole(role: string | null | undefined): UserRole {
+  const roleNettoye = (role ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[éèêë]/g, "e");
+
+  if (roleNettoye === "admin") return "admin";
+  if (roleNettoye === "cc") return "cc";
+  if (roleNettoye === "cca") return "cca";
+  if (roleNettoye === "rp") return "rp";
+  if (roleNettoye === "equipier") return "equipier";
+
+  return "equipier";
 }
 
 function mapCapture(row: {
@@ -139,6 +157,30 @@ function mapCapture(row: {
     commentaire: row.commentaire ?? undefined,
     photoUrl: row.photo_url ?? undefined,
   };
+}
+
+async function parseApiJson<T>(response: Response): Promise<T> {
+  const raw = await response.text();
+
+  if (!raw) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    const preview = raw.slice(0, 180).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Réponse API invalide (attendu JSON, reçu autre chose): ${preview}`,
+    );
+  }
+}
+
+export interface CaptureSystemLog extends CaptureHACCP {
+  utilisateurNom: string;
+  utilisateurPrenom: string;
+  utilisateurEmail: string;
+  confianceOCR?: number;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -272,6 +314,97 @@ export async function fetchProfil(): Promise<User | null> {
     throw new Error(`fetchProfil : ${error.message}`);
   }
   return data ? mapUser(data) : null;
+}
+
+/** Récupère tous les utilisateurs (admin only via RLS) */
+export async function fetchAllUsers(): Promise<User[]> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error(
+      "Session expirée. Reconnectez-vous pour charger les utilisateurs.",
+    );
+  }
+
+  const response = await fetch("/api/admin/users/list", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const result = await parseApiJson<{
+    error?: string;
+    users?: User[];
+  }>(response);
+
+  if (!response.ok) {
+    throw new Error(result.error ?? "Impossible de charger les utilisateurs.");
+  }
+
+  return result.users ?? [];
+}
+
+/** Met à jour le rôle d'un utilisateur (admin only via RLS) */
+export async function updateUserRole(
+  userId: string,
+  newRole: UserRole,
+): Promise<void> {
+  const { error } = await supabase
+    .from("utilisateurs")
+    .update({ role: newRole })
+    .eq("id", userId);
+
+  if (error) throw new Error(`updateUserRole : ${error.message}`);
+}
+
+/** Récupère les derniers logs de captures avec l'utilisateur ayant scanné */
+export async function fetchRecentCaptureLogs(
+  limit = 20,
+): Promise<CaptureSystemLog[]> {
+  const baseSelect =
+    "id, produit_id, emplacement_id, user_id, date_capture, numero_lot, dlc, nom_produit_ocr, nom_produit_valide, temperature, conforme, commentaire, photo_url, utilisateurs!captures_user_id_fkey(nom, prenom, email)";
+
+  const { data, error } = await supabase
+    .from("captures")
+    .select(baseSelect)
+    .order("date_capture", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(`fetchRecentCaptureLogs : ${error.message}`);
+
+  return (data ?? []).map((row) => {
+    const utilisateur = Array.isArray(row.utilisateurs)
+      ? row.utilisateurs[0]
+      : row.utilisateurs;
+
+    const capture = mapCapture({
+      id: row.id,
+      produit_id: row.produit_id,
+      emplacement_id: row.emplacement_id,
+      user_id: row.user_id,
+      date_capture: row.date_capture,
+      numero_lot: row.numero_lot,
+      dlc: row.dlc,
+      nom_produit_ocr: row.nom_produit_ocr,
+      nom_produit_valide: row.nom_produit_valide,
+      temperature: row.temperature,
+      conforme: row.conforme,
+      commentaire: row.commentaire,
+      photo_url: row.photo_url,
+    });
+
+    return {
+      ...capture,
+      confianceOCR: 0.9,
+      utilisateurNom: utilisateur?.nom ?? "Inconnu",
+      utilisateurPrenom: utilisateur?.prenom ?? "",
+      utilisateurEmail: utilisateur?.email ?? "",
+    };
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -410,11 +543,115 @@ export interface SignUpInput {
   password: string;
 }
 
+export async function adminCreateUser(
+  payload: SignUpInput & { role: UserRole; siteIds?: string[] },
+): Promise<{ userId: string }> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error(
+      "Session expirée. Reconnectez-vous pour créer un utilisateur.",
+    );
+  }
+
+  const response = await fetch("/api/admin/create-user", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const result = await parseApiJson<{
+    error?: string;
+    userId?: string;
+  }>(response);
+
+  if (!response.ok) {
+    throw new Error(result.error ?? "Impossible de créer le compte.");
+  }
+
+  if (!result.userId) {
+    throw new Error("Réponse invalide du serveur lors de la création.");
+  }
+
+  return { userId: result.userId };
+}
+
+export async function adminUpdateUserSites(
+  userId: string,
+  siteIds: string[],
+): Promise<void> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error(
+      "Session expirée. Reconnectez-vous pour modifier les accès site.",
+    );
+  }
+
+  const response = await fetch(`/api/admin/users/${userId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ siteIds }),
+  });
+
+  const result = await parseApiJson<{
+    error?: string;
+  }>(response);
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ?? "Impossible de mettre à jour les accès site.",
+    );
+  }
+}
+
+export async function adminDeleteUser(userId: string): Promise<void> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error(
+      "Session expirée. Reconnectez-vous pour supprimer le compte.",
+    );
+  }
+
+  const response = await fetch(`/api/admin/users/${userId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const result = await parseApiJson<{
+    error?: string;
+  }>(response);
+
+  if (!response.ok) {
+    throw new Error(result.error ?? "Impossible de supprimer le compte.");
+  }
+}
+
 export interface SignUpResult {
-  user: User;
+  user: User | null;
   requiresEmailConfirmation: boolean;
   confirmationEmailRequested: boolean;
   email: string;
+  emailDejaUtilise: boolean;
+  messageErreur?: string;
 }
 
 function buildFallbackUserFromAuth(input: {
@@ -442,8 +679,10 @@ function buildFallbackUserFromAuth(input: {
 export async function signUpWithProfile(
   payload: SignUpInput,
 ): Promise<SignUpResult> {
+  const emailNormalise = payload.email.trim().toLowerCase();
+
   const { data, error } = await supabase.auth.signUp({
-    email: payload.email,
+    email: emailNormalise,
     password: payload.password,
     options: {
       data: {
@@ -453,16 +692,54 @@ export async function signUpWithProfile(
     },
   });
 
-  if (error) throw new Error(`signUpWithProfile : ${error.message}`);
+  if (error) {
+    if (/already registered/i.test(error.message)) {
+      return {
+        user: null,
+        requiresEmailConfirmation: false,
+        confirmationEmailRequested: false,
+        email: emailNormalise,
+        emailDejaUtilise: true,
+        messageErreur: "Cette adresse email est deja utilisee.",
+      };
+    }
+
+    if (/password/i.test(error.message)) {
+      return {
+        user: null,
+        requiresEmailConfirmation: false,
+        confirmationEmailRequested: false,
+        email: emailNormalise,
+        emailDejaUtilise: false,
+        messageErreur:
+          "Le mot de passe ne respecte pas les contraintes de securite.",
+      };
+    }
+
+    throw new Error(`signUpWithProfile : ${error.message}`);
+  }
   if (!data.user) throw new Error("signUpWithProfile : aucun utilisateur créé");
+
+  const compteExistantObfusque =
+    Array.isArray(data.user.identities) && data.user.identities.length === 0;
+
+  if (compteExistantObfusque) {
+    return {
+      user: null,
+      requiresEmailConfirmation: false,
+      confirmationEmailRequested: false,
+      email: emailNormalise,
+      emailDejaUtilise: true,
+      messageErreur: "Cette adresse email est deja utilisee.",
+    };
+  }
 
   const { error: insertError } = await supabase.from("utilisateurs").upsert(
     {
       id: data.user.id,
       nom: payload.nom,
       prenom: payload.prenom,
-      email: payload.email,
-      role: "equipier",
+      email: emailNormalise,
     },
     { onConflict: "id" },
   );
@@ -479,7 +756,7 @@ export async function signUpWithProfile(
     profil ??
     buildFallbackUserFromAuth({
       id: data.user.id,
-      email: payload.email,
+      email: emailNormalise,
       nom: payload.nom,
       prenom: payload.prenom,
     });
@@ -488,11 +765,13 @@ export async function signUpWithProfile(
     user,
     requiresEmailConfirmation,
     confirmationEmailRequested,
-    email: payload.email,
+    email: emailNormalise,
+    emailDejaUtilise: false,
   };
 }
 
 export async function resendConfirmationEmail(email: string): Promise<void> {
+  const emailNormalise = email.trim().toLowerCase();
   const emailRedirectTo =
     typeof window !== "undefined"
       ? `${window.location.origin}/auth`
@@ -500,7 +779,7 @@ export async function resendConfirmationEmail(email: string): Promise<void> {
 
   const { error } = await supabase.auth.resend({
     type: "signup",
-    email,
+    email: emailNormalise,
     options: emailRedirectTo ? { emailRedirectTo } : undefined,
   });
 
@@ -514,12 +793,27 @@ export async function signIn(
   email: string,
   password: string,
 ): Promise<{ user: User }> {
+  const emailNormalise = email.trim().toLowerCase();
+
   const { data, error } = await supabase.auth.signInWithPassword({
-    email,
+    email: emailNormalise,
     password,
   });
 
-  if (error) throw new Error(`signIn : ${error.message}`);
+  if (error) {
+    if (/invalid login credentials/i.test(error.message)) {
+      throw new Error("Email ou mot de passe incorrect.");
+    }
+    if (/email not confirmed/i.test(error.message)) {
+      throw new Error(
+        "Votre adresse email n'a pas encore ete confirmee. Verifiez votre boite de reception.",
+      );
+    }
+    if (/too many requests/i.test(error.message)) {
+      throw new Error("Trop de tentatives. Reessayez dans quelques instants.");
+    }
+    throw new Error(`Erreur de connexion : ${error.message}`);
+  }
   if (!data.user) throw new Error("signIn : aucun utilisateur retourné");
 
   let profil = await fetchProfil();
@@ -542,8 +836,7 @@ export async function signIn(
         id: data.user.id,
         nom: fallbackNom,
         prenom: fallbackPrenom,
-        email: data.user.email ?? email,
-        role: "equipier",
+        email: data.user.email ?? emailNormalise,
       },
       { onConflict: "id" },
     );
@@ -559,7 +852,7 @@ export async function signIn(
     return {
       user: buildFallbackUserFromAuth({
         id: data.user.id,
-        email: data.user.email ?? email,
+        email: data.user.email ?? emailNormalise,
       }),
     };
   }

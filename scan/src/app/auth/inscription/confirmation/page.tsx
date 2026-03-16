@@ -10,6 +10,36 @@ export default function InscriptionConfirmationPage() {
   const searchParams = useSearchParams();
   const { renvoyerEmailConfirmation } = useApp();
 
+  const styles = {
+    page: "min-h-screen bg-background",
+    container: "max-w-xl px-4 py-10 mx-auto",
+    backLink:
+      "inline-flex items-center gap-2 mb-5 text-sm text-muted hover:text-on-surface",
+    card: "p-6 border shadow-xl rounded-3xl border-border bg-surface sm:p-8 shadow-primary/5",
+    topRow: "flex items-start gap-3 mb-5",
+    topIconWrap:
+      "flex items-center justify-center w-11 h-11 rounded-2xl bg-success text-white",
+    title: "text-xl font-bold text-on-surface",
+    subtitle: "text-sm text-muted",
+    infoBox:
+      "p-4 mb-4 text-sm border rounded-xl border-primary/20 bg-primary/5 text-on-surface",
+    infoTitle: "font-semibold",
+    infoMuted: "mt-1 text-muted",
+    emailBox:
+      "p-4 mb-4 text-sm border rounded-xl border-border bg-surface-alt text-on-surface",
+    emailTitle: "flex items-center gap-2 font-medium",
+    emailValue: "mt-1 text-muted break-all",
+    errorBox:
+      "px-4 py-3 mb-4 text-sm border rounded-xl border-danger/20 bg-danger/10 text-danger",
+    successBox:
+      "px-4 py-3 mb-4 text-sm border rounded-xl border-success/20 bg-success/10 text-success",
+    actions: "space-y-3",
+    resendButton:
+      "inline-flex items-center justify-center w-full gap-2 px-4 py-3 text-sm font-medium transition-colors border rounded-xl border-border text-on-surface hover:bg-surface-alt disabled:opacity-50 disabled:cursor-not-allowed",
+    loginLink:
+      "inline-flex items-center justify-center w-full px-4 py-3 text-sm font-semibold transition-colors rounded-xl bg-primary text-on-primary hover:bg-primary-dark",
+  };
+
   const [erreur, setErreur] = useState<string | null>(null);
   const [infoRenvoi, setInfoRenvoi] = useState<string | null>(null);
   const [renvoiEnCours, setRenvoiEnCours] = useState(false);
@@ -56,65 +86,52 @@ export default function InscriptionConfirmationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-xl px-4 py-10 mx-auto">
-        <Link
-          href="/auth/inscription"
-          className="inline-flex items-center gap-2 mb-5 text-sm text-muted hover:text-on-surface"
-        >
-          <ArrowLeft className="w-4 h-4" /> Retour a l'inscription
+    <div className={styles.page}>
+      <div className={styles.container}>
+        <Link href="/auth/inscription" className={styles.backLink}>
+          <ArrowLeft className="w-4 h-4" /> Retour a l&apos;inscription
         </Link>
 
-        <div className="p-6 border shadow-xl rounded-3xl border-border bg-surface sm:p-8 shadow-primary/5">
-          <div className="flex items-start gap-3 mb-5">
-            <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-success text-white">
+        <div className={styles.card}>
+          <div className={styles.topRow}>
+            <div className={styles.topIconWrap}>
               <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-on-surface">
-                Compte enregistre
-              </h1>
-              <p className="text-sm text-muted">{messagePrincipal}</p>
+              <h1 className={styles.title}>Compte enregistre</h1>
+              <p className={styles.subtitle}>{messagePrincipal}</p>
             </div>
           </div>
 
-          <div className="p-4 mb-4 text-sm border rounded-xl border-primary/20 bg-primary/5 text-on-surface">
-            <p className="font-semibold">
-              Statut verifiable depuis l'application
+          <div className={styles.infoBox}>
+            <p className={styles.infoTitle}>
+              Statut verifiable depuis l&apos;application
             </p>
-            <p className="mt-1 text-muted">
-              L'application peut confirmer la reponse de Supabase, mais ne peut
-              pas prouver la livraison finale dans la boite de reception.
+            <p className={styles.infoMuted}>
+              L&apos;application peut confirmer la reponse de Supabase, mais ne
+              peut pas prouver la livraison finale dans la boite de reception.
             </p>
           </div>
 
           {email && (
-            <div className="p-4 mb-4 text-sm border rounded-xl border-border bg-surface-alt text-on-surface">
-              <p className="flex items-center gap-2 font-medium">
+            <div className={styles.emailBox}>
+              <p className={styles.emailTitle}>
                 <Mail className="w-4 h-4 text-primary" /> Adresse concernee
               </p>
-              <p className="mt-1 text-muted break-all">{email}</p>
+              <p className={styles.emailValue}>{email}</p>
             </div>
           )}
 
-          {erreur && (
-            <div className="px-4 py-3 mb-4 text-sm border rounded-xl border-danger/20 bg-danger/10 text-danger">
-              {erreur}
-            </div>
-          )}
+          {erreur && <div className={styles.errorBox}>{erreur}</div>}
 
-          {infoRenvoi && (
-            <div className="px-4 py-3 mb-4 text-sm border rounded-xl border-success/20 bg-success/10 text-success">
-              {infoRenvoi}
-            </div>
-          )}
+          {infoRenvoi && <div className={styles.successBox}>{infoRenvoi}</div>}
 
-          <div className="space-y-3">
+          <div className={styles.actions}>
             <button
               type="button"
               onClick={handleResend}
               disabled={renvoiEnCours || !email || !requiresEmailConfirmation}
-              className="inline-flex items-center justify-center w-full gap-2 px-4 py-3 text-sm font-medium transition-colors border rounded-xl border-border text-on-surface hover:bg-surface-alt disabled:opacity-50 disabled:cursor-not-allowed"
+              className={styles.resendButton}
             >
               <RefreshCw
                 className={`w-4 h-4 ${renvoiEnCours ? "animate-spin" : ""}`}
@@ -125,8 +142,12 @@ export default function InscriptionConfirmationPage() {
             </button>
 
             <Link
-              href="/auth"
-              className="inline-flex items-center justify-center w-full px-4 py-3 text-sm font-semibold transition-colors rounded-xl bg-primary text-on-primary hover:bg-primary-dark"
+              href={
+                email
+                  ? `/auth?from=confirmation&email=${encodeURIComponent(email)}`
+                  : "/auth?from=confirmation"
+              }
+              className={styles.loginLink}
             >
               Aller a la connexion
             </Link>
